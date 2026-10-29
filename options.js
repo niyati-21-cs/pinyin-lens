@@ -24,4 +24,11 @@ el('save').addEventListener('click', async () => {
   setTimeout(() => (el('saved').textContent = ''), 2000);
 });
 
-load();
+function showEngineFields() {
+  const api = el('engine').value === 'api';
+  el('api-fields').hidden = !api;
+  el('local-fields').hidden = api;
+}
+el('engine').addEventListener('change', showEngineFields);
+
+load().then(showEngineFields);

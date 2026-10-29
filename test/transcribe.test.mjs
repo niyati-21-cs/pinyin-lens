@@ -1,16 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRequest, cleanTranscript, transcribe, TRANSCRIBE_URL } from '../lib/transcribe.js';
+import { buildRequest, cleanTranscript, transcribe, DEFAULT_API_BASE } from '../lib/transcribe.js';
 
 const blob = new Blob(['fake audio'], { type: 'audio/webm' });
 
 test('request carries key, model, language and the audio file', async () => {
   const [url, init] = buildRequest(blob, { apiKey: 'sk-test', model: 'gpt-4o-mini-transcribe' });
-  assert.equal(url, TRANSCRIBE_URL);
+  assert.equal(url, `${DEFAULT_API_BASE}/audio/transcriptions`);
   assert.equal(init.headers.Authorization, 'Bearer sk-test');
   assert.equal(init.body.get('model'), 'gpt-4o-mini-transcribe');
   assert.equal(init.body.get('language'), 'zh');
   assert.equal(await init.body.get('file').text(), 'fake audio');
+});
+
+test('custom OpenAI-compatible base URL', () => {
+  const [url] = buildRequest(blob, { apiKey: 'k', apiBase: 'https://api.groq.com/openai/v1/' });
+  assert.equal(url, 'https://api.groq.com/openai/v1/audio/transcriptions');
 });
 
 test('returns cleaned text and drops known hallucinations', async () => {

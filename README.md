@@ -17,9 +17,14 @@ Chrome and Edge work the same way: use `chrome://extensions` or `edge://extensio
 |---|---|---|
 | The video's Chinese subtitle track (`<track>`, srclang `zh`) | Automatic | Free, offline |
 | Site captions on YouTube, Netflix, Disney+ and Prime Video | Automatic; turn on Chinese subtitles in the player | Free, offline |
-| **Audio mode**: transcribes what is spoken | Click the toolbar icon → **Listen to this tab** | OpenAI API key, about $0.006/min |
+| **Audio mode**: transcribes what is spoken | Click the toolbar icon → **Listen to this tab** | **Free**: runs Whisper on your computer. A cloud API is optional |
 
 The site's own subtitles are hidden while the overlay is on, so you only see the overlay. You can change this in Settings. For other sites that draw their own subtitles, add their CSS selector under **Settings → Extra subtitle selectors**.
+
+### Audio mode engines
+
+- **On-device (default, free, no account).** Whisper runs inside the browser using [transformers.js](https://github.com/huggingface/transformers.js). On first use the browser downloads the model from Hugging Face (tiny ~40 MB, base ~80 MB, small ~250 MB) and caches it, so later starts are quick. It uses your GPU (WebGPU) when Brave allows it, otherwise the CPU. Download progress shows on the video. If lines fall behind, choose a smaller model in Settings. If Hugging Face is blocked where you are, set the model server to `https://hf-mirror.com/`.
+- **Cloud API (optional).** OpenAI (about $0.006/min with Whisper) or any OpenAI-compatible service, such as Groq's free tier with `whisper-large-v3`. Set the engine, key, base URL and model in Settings.
 
 All translation is **offline**. Each word is looked up in the bundled CC-CEDICT dictionary (125,000 entries, simplified and traditional).
 
@@ -34,16 +39,22 @@ All translation is **offline**. Each word is looked up in the bundled CC-CEDICT 
 ## Limitations
 
 - When a site makes the `<video>` element *itself* fullscreen (plain HTML5 players with native controls), nothing can be drawn over it. Most streaming sites make a wrapper element fullscreen instead, which works.
-- Audio mode shows lines 3–8 s after they are spoken, and its accuracy depends on the speech-to-text model. Clips with no sound are not sent.
+- Audio mode shows lines a few seconds after they are spoken, and its accuracy depends on the speech-to-text model. Whisper tiny/base make more mistakes on Chinese than the cloud models. Clips with no sound are skipped. If your computer can't keep up on-device, some audio is skipped rather than lagging further behind.
 - Words are split using a dictionary and the readings are dictionary-based, so occasional mis-splits or the less common reading of a character can happen.
 - Netflix and other sites change their caption markup from time to time. If captions stop being picked up, add the new selector in Settings.
 
 ## Development
 
 ```bash
-node --test test/*.test.mjs   # segmentation, pinyin, transcription request tests
-node test/e2e.mjs [outdir]    # loads the extension in Chromium (Playwright) and checks the overlay
-node scripts/build-dict.mjs   # rebuild data/cedict.json from the latest CC-CEDICT
+npm test                          # everything below
+node --test test/*.test.mjs       # segmentation, pinyin, transcription request tests
+node test/e2e.mjs [outdir]        # overlay: subtitles, captions, saving, settings, fullscreen, iframes
+node test/e2e-audio.mjs [outdir]  # audio mode: tab capture, phrase splitting, both engines (mock servers)
+node scripts/build-dict.mjs       # rebuild data/cedict.json from the latest CC-CEDICT
 ```
+
+The e2e tests need Playwright with Chromium and ffmpeg. They use local mock servers, so no real model or API is called.
+
+`vendor/` holds transformers.js 3.8.1 and the ONNX Runtime WebAssembly build (Apache-2.0 / MIT), bundled because extensions can't load remote code.
 
 Dictionary data: [CC-CEDICT](https://cc-cedict.org), licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).

@@ -34,19 +34,54 @@
   </div>
 
   <h2>Audio mode (videos without Chinese subtitles)</h2>
-  <p class="muted">Click <b>Listen to this tab</b> in the toolbar popup. The tab's audio is sent to OpenAI's speech-to-text API in short clips, about $0.006 per minute with Whisper. Only clips with sound are sent.</p>
+  <p class="muted">Click <b>Listen to this tab</b> in the toolbar popup. Only clips that contain sound are transcribed.</p>
   <div class="field">
-    <span>OpenAI API key</span>
-    <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off">
-    <small>Stored only in this browser. Create one at platform.openai.com/api-keys.</small>
-  </div>
-  <div class="field">
-    <span>Model</span>
-    <select id="model">
-      <option value="whisper-1">whisper-1</option>
-      <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
-      <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
+    <span>Speech-to-text engine</span>
+    <select id="engine">
+      <option value="local">On-device: free, private, no account</option>
+      <option value="api">Cloud API: OpenAI or compatible, needs a key</option>
     </select>
+  </div>
+
+  <div id="local-fields">
+    <div class="field">
+      <span>On-device model</span>
+      <select id="localModel">
+        <option value="onnx-community/whisper-tiny">Whisper tiny: ~40 MB download, fastest, least accurate</option>
+        <option value="onnx-community/whisper-base">Whisper base: ~80 MB, good balance (recommended)</option>
+        <option value="onnx-community/whisper-small">Whisper small: ~250 MB, most accurate, needs a fast computer</option>
+      </select>
+      <small>Downloaded once on first use, then cached by the browser. Uses your GPU (WebGPU) when available, otherwise the CPU. If lines lag behind or audio gets skipped, pick a smaller model.</small>
+    </div>
+    <div class="field">
+      <span>Model download server</span>
+      <input type="text" id="modelHost" placeholder="https://huggingface.co/">
+      <small>Change to <code>https://hf-mirror.com/</code> if Hugging Face is blocked where you are.</small>
+    </div>
+  </div>
+
+  <div id="api-fields">
+    <div class="field">
+      <span>API key</span>
+      <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off">
+      <small>Stored only in this browser. OpenAI: platform.openai.com/api-keys · Groq: console.groq.com/keys</small>
+    </div>
+    <div class="field">
+      <span>API base URL</span>
+      <input type="text" id="apiBase" placeholder="https://api.openai.com/v1">
+      <small>Any OpenAI-compatible speech-to-text service works, e.g. Groq (<code>https://api.groq.com/openai/v1</code>, model <code>whisper-large-v3</code>, has a free tier). OpenAI costs about $0.006 per minute with Whisper.</small>
+    </div>
+    <div class="field">
+      <span>Model</span>
+      <input type="text" id="model" list="models">
+      <datalist id="models">
+        <option value="whisper-1"></option>
+        <option value="gpt-4o-mini-transcribe"></option>
+        <option value="gpt-4o-transcribe"></option>
+        <option value="whisper-large-v3"></option>
+        <option value="whisper-large-v3-turbo"></option>
+      </datalist>
+    </div>
   </div>
   <div class="pair">
     <div class="field">
@@ -61,7 +96,7 @@
   </div>
 
   <p><button class="primary" id="save">Save</button><span id="saved"></span></p>
-  <p class="muted" style="margin-top:32px">Dictionary: CC-CEDICT, licensed CC BY-SA 4.0 (cc-cedict.org).</p>
+  <p class="muted" style="margin-top:32px">Dictionary: CC-CEDICT, licensed CC BY-SA 4.0 (cc-cedict.org). On-device speech: Whisper via transformers.js (Apache-2.0).</p>
 </main>
 <script src="lib/defaults.js"></script>
 <script src="options.js"></script>

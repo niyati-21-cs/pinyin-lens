@@ -1,0 +1,18 @@
+<!doctype html><meta charset="utf-8"><title>Multiple videos test</title>
+<body style="margin:0;background:#111">
+<!-- A small playing video first; a bigger one is added later and should take over. -->
+<video id="small" src="clip.webm" muted loop autoplay playsinline style="width:320px;height:180px;display:block">
+  <track kind="subtitles" srclang="zh" src="small.vtt" default>
+</video>
+<script>
+  setTimeout(() => {
+    const v = document.createElement('video');
+    Object.assign(v, { id: 'big', src: 'clip.webm', muted: true, loop: true, autoplay: true, playsInline: true });
+    v.style.cssText = 'width:900px;height:506px;display:block';
+    const t = document.createElement('track');
+    Object.assign(t, { kind: 'subtitles', srclang: 'zh', src: 'big.vtt', default: true });
+    v.appendChild(t);
+    document.body.appendChild(v);
+  }, 1500);
+</script>
+</body>

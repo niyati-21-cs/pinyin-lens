@@ -1,1 +1,9 @@
-{"type":"module"}
+{
+  "name": "pinyin-lens",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs && node test/e2e.mjs && node test/e2e-audio.mjs",
+    "build-dict": "node scripts/build-dict.mjs"
+  }
+}

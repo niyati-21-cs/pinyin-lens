@@ -25,6 +25,7 @@
   let lineSeq = 0;
   let listening = false;
   let statusError = '';
+  let statusInfo = '';
   let errorTimer = 0;
   let hovered = null;
   let pausedByUs = false;
@@ -135,14 +136,21 @@
     else if (track) applyTrackMode();
   }
 
+  const originalModes = new WeakMap();
+
   function applyTrackMode() {
+    if (!originalModes.has(track)) originalModes.set(track, track.mode);
     // "hidden" still fires cuechange, it just stops the browser drawing them.
-    const want = settings.enabled && settings.hideNative ? 'hidden' : track.mode === 'disabled' ? 'hidden' : track.mode;
+    // With the overlay off, the track goes back to how the page had it.
+    const want = !settings.enabled ? originalModes.get(track) : settings.hideNative ? 'hidden' : 'showing';
     if (track.mode !== want) track.mode = want;
   }
 
   function setTrack(t) {
-    if (track) track.removeEventListener('cuechange', onCueChange);
+    if (track) {
+      track.removeEventListener('cuechange', onCueChange);
+      if (originalModes.has(track)) track.mode = originalModes.get(track);
+    }
     track = t;
     if (!track) return;
     applyTrackMode();
@@ -282,9 +290,9 @@
       if (el) openCard(el, line.tokens[reopen]);
     }
 
-    badge.hidden = !(listening || statusError);
+    badge.hidden = !(listening || statusError || statusInfo);
     badge.className = 'badge' + (statusError ? ' err' : '');
-    badge.textContent = statusError || '🎧 Listening… (lines appear a few seconds late)';
+    badge.textContent = statusError || statusInfo || '🎧 Listening… (lines appear a few seconds late)';
     position();
   }
 
@@ -299,7 +307,7 @@
   }
 
   (function loop() {
-    if (line.tokens.length || listening || statusError) position();
+    if (line.tokens.length || listening || statusError || statusInfo) position();
     requestAnimationFrame(loop);
   })();
 
@@ -429,10 +437,17 @@
     if (msg.type === 'line' && video) showLine(msg.text, msg.source);
     if (msg.type === 'status') {
       listening = msg.listening;
-      clearTimeout(errorTimer);
-      statusError = msg.error ? `⚠ ${msg.error}` : '';
-      if (statusError) errorTimer = setTimeout(() => { statusError = ''; render(); }, 8000);
-      if (!listening && line.source === 'audio') line = { text: '', tokens: [], source: null };
+      if ('info' in msg) statusInfo = msg.info || '';
+      if (msg.error) {
+        clearTimeout(errorTimer);
+        statusError = `⚠ ${msg.error}`;
+        errorTimer = setTimeout(() => { statusError = ''; render(); }, 8000);
+      }
+      if (!listening) {
+        statusInfo = '';
+        statusError = '';
+        if (line.source === 'audio') line = { text: '', tokens: [], source: null };
+      }
       render();
     }
   });
