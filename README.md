@@ -24,6 +24,12 @@ The site's own subtitles are hidden while the overlay is on, so you only see the
 ### Audio mode engines
 
 - **On-device (default, free, no account).** Whisper runs inside the browser using [transformers.js](https://github.com/huggingface/transformers.js). On first use the browser downloads the model from Hugging Face (tiny ~40 MB, base ~80 MB, small ~250 MB) and caches it, so later starts are quick. It uses your GPU (WebGPU) when Brave allows it, otherwise the CPU. Download progress shows on the video. If lines fall behind, choose a smaller model in Settings. If Hugging Face is blocked where you are, set the model server to `https://hf-mirror.com/`.
+- **Where the model is stored.** In Brave's cache storage, under the name `transformers-cache` and belonging to the extension (not in Downloads, and websites can't read it). On disk it's inside your Brave profile (assuming the usual `Default` profile), with scrambled file names:
+  - macOS: `~/Library/Application Support/BraveSoftware/Brave-Browser/Default/Service Worker/CacheStorage/`
+  - Windows: `%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data\Default\Service Worker\CacheStorage\`
+  - Linux: `~/.config/BraveSoftware/Brave-Browser/Default/Service Worker/CacheStorage/`
+
+  It's about 80 MB for the default model on the CPU. The GPU uses a different version of the model, which can be somewhat bigger, and each model you pick in Settings is stored separately. To see or delete it, open the extension's Settings page, press F12 and go to **Application → Cache storage → transformers-cache**. To delete it, run `caches.delete('transformers-cache')` in the Console tab there. Removing the extension also deletes it. If it's deleted, the model downloads again the next time you use audio mode.
 - **Cloud API (optional).** OpenAI (about $0.006/min with Whisper) or any OpenAI-compatible service, such as Groq's free tier with `whisper-large-v3`. Set the engine, key, base URL and model in Settings.
 
 All translation is **offline**. Each word is looked up in the bundled CC-CEDICT dictionary (125,000 entries, simplified and traditional).
