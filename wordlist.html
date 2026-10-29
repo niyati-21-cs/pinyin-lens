@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Saved Words</title>
+<link rel="stylesheet" href="pages.css">
+<style>
+  main { max-width: 900px; margin: 0 auto; padding: 32px 16px 64px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0; }
+  .bar input { flex: 1; min-width: 160px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .hz { font: 600 24px/1.2 "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; white-space: nowrap; }
+  .py { color: var(--accent); font-weight: 600; white-space: nowrap; }
+  .sent { color: var(--muted); font-size: 13px; }
+  td button { padding: 4px 8px; }
+  .empty { text-align: center; color: var(--muted); padding: 48px 0; }
+  @media (max-width: 600px) { .sent-col { display: none; } }
+</style>
+<main>
+  <h1>Saved words</h1>
+  <p class="muted">Hover a word in the video overlay and click it (or press S) to save it here.</p>
+  <div class="bar">
+    <input type="text" id="filter" placeholder="Filter by character, pinyin or meaning">
+    <button class="primary" id="export">Export CSV (Anki / Pleco)</button>
+    <button id="clear">Delete all</button>
+  </div>
+  <table>
+    <thead><tr><th>Word</th><th>Pinyin</th><th>Meaning</th><th class="sent-col">From</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+<script src="wordlist.js"></script>
+</html>

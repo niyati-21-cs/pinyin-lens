@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>DOM caption test</title>
+<body style="margin:0;background:#111">
+<div style="position:relative;width:960px;margin:20px auto">
+  <video id="v" src="clip.webm" muted loop playsinline style="width:960px;height:540px;display:block"></video>
+  <div style="position:absolute;bottom:40px;width:100%;text-align:center;color:#fff;font-size:24px">
+    <span class="ytp-caption-segment" id="cap"></span>
+  </div>
+</div>
+<script>
+  const lines = ['你好，欢迎来到北京。', '我喜欢喝茶。'];
+  let i = 0;
+  const tick = () => { document.getElementById('cap').textContent = lines[i++ % lines.length]; };
+  tick(); setInterval(tick, 4000);
+</script>
+</body>

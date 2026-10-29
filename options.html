@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Pinyin Lens Settings</title>
+<link rel="stylesheet" href="pages.css">
+<style>
+  main { max-width: 620px; margin: 0 auto; padding: 32px 16px 64px; }
+  .field { margin: 10px 0; }
+  .field > span { display: block; font-weight: 600; margin-bottom: 4px; }
+  .field small { display: block; color: var(--muted); margin-top: 4px; }
+  .pair { display: flex; gap: 12px; }
+  .pair .field { flex: 1; }
+  #saved { margin-left: 10px; color: var(--muted); }
+</style>
+<main>
+  <h1>Pinyin Lens settings</h1>
+  <p class="muted">Changes apply to open videos right away.</p>
+
+  <h2>Display</h2>
+  <label class="row"><input type="checkbox" id="enabled"> Show the overlay on videos</label>
+  <label class="row"><input type="checkbox" id="showPinyin"> Show pinyin above each word</label>
+  <label class="row"><input type="checkbox" id="showGloss"> Show a short English meaning under each word</label>
+  <label class="row"><input type="checkbox" id="toneColors"> Color words by tone</label>
+  <label class="row"><input type="checkbox" id="hideNative"> Hide the site's own subtitles while the overlay is on</label>
+  <label class="row"><input type="checkbox" id="pauseOnHover"> Pause the video while I hover a word</label>
+  <div class="field">
+    <span>Text size (px)</span>
+    <input type="number" id="fontSize" min="14" max="72" step="1">
+  </div>
+  <div class="field">
+    <span>Extra subtitle selectors</span>
+    <textarea id="extraSelectors" rows="3" placeholder=".subtitle-text, .caption-line"></textarea>
+    <small>For sites that draw their own subtitles as page elements (YouTube, Netflix, Disney+ and Prime Video are built in). One CSS selector per line.</small>
+  </div>
+
+  <h2>Audio mode (videos without Chinese subtitles)</h2>
+  <p class="muted">Click <b>Listen to this tab</b> in the toolbar popup. The tab's audio is sent to OpenAI's speech-to-text API in short clips, about $0.006 per minute with Whisper. Only clips with sound are sent.</p>
+  <div class="field">
+    <span>OpenAI API key</span>
+    <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off">
+    <small>Stored only in this browser. Create one at platform.openai.com/api-keys.</small>
+  </div>
+  <div class="field">
+    <span>Model</span>
+    <select id="model">
+      <option value="whisper-1">whisper-1</option>
+      <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
+      <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
+    </select>
+  </div>
+  <div class="pair">
+    <div class="field">
+      <span>Shortest clip (s)</span>
+      <input type="number" id="minChunk" min="1" max="10" step="0.5">
+    </div>
+    <div class="field">
+      <span>Longest clip (s)</span>
+      <input type="number" id="maxChunk" min="3" max="30" step="1">
+      <small>Clips end early at a pause in speech.</small>
+    </div>
+  </div>
+
+  <p><button class="primary" id="save">Save</button><span id="saved"></span></p>
+  <p class="muted" style="margin-top:32px">Dictionary: CC-CEDICT, licensed CC BY-SA 4.0 (cc-cedict.org).</p>
+</main>
+<script src="lib/defaults.js"></script>
+<script src="options.js"></script>
+</html>

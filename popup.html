@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Pinyin Lens</title>
+<link rel="stylesheet" href="pages.css">
+<style>
+  body { width: 300px; padding: 16px; }
+  .top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .top img { width: 28px; height: 28px; }
+  .top h1 { flex: 1; font-size: 17px; margin: 0; }
+  section { border-top: 1px solid var(--line); padding: 12px 0; }
+  #listen { width: 100%; margin-top: 6px; }
+  #status { font-size: 12px; margin: 8px 0 0; min-height: 1em; }
+  .links { display: flex; justify-content: space-between; padding-top: 12px; border-top: 1px solid var(--line); }
+</style>
+<div class="top">
+  <img src="icons/icon48.png" alt="">
+  <h1>Pinyin Lens</h1>
+</div>
+<label class="row"><input type="checkbox" id="enabled"> Show overlay on videos <span class="muted">(Alt+P)</span></label>
+<label class="row"><input type="checkbox" id="showPinyin"> Pinyin</label>
+<label class="row"><input type="checkbox" id="showGloss"> English under each word</label>
+<section>
+  <strong>No Chinese subtitles?</strong>
+  <div class="muted">Transcribe the tab's audio instead (uses your OpenAI key).</div>
+  <button id="listen" class="primary">🎧 Listen to this tab</button>
+  <p id="status" class="muted"></p>
+</section>
+<div class="links">
+  <a href="wordlist.html" target="_blank">★ Saved words (<span id="count">0</span>)</a>
+  <a href="options.html" target="_blank">Settings</a>
+</div>
+<script src="lib/defaults.js"></script>
+<script src="popup.js"></script>
+</html>
