@@ -221,6 +221,71 @@
     render();
   }
 
+  // --- audio-mode pacing ------------------------------------------------------
+  // Transcripts arrive unevenly: a long line, then a one-word line a moment
+  // later. Each line stays up long enough to read (time counts only while the
+  // video plays, so pausing the video pauses the subtitles), and short
+  // follow-ups are joined onto the line that's still being read.
+
+  const READ_BASE_MS = 1500;
+  const READ_PER_CHAR_MS = 300;
+  const READ_MAX_MS = 7000;
+  const SHORT_LINE_CHARS = 4; // lines this short are joined onto the previous one
+  const JOIN_MAX_CHARS = 24;
+  const MAX_QUEUE = 3; // beyond this, skip ahead rather than fall further behind
+  const PACE_TICK_MS = 200;
+
+  const hanCount = (text) => (text.match(/\p{Script=Han}/gu) || []).length;
+  const readMs = (text) => Math.min(READ_MAX_MS, READ_BASE_MS + hanCount(text) * READ_PER_CHAR_MS);
+
+  const pacer = { text: '', needMs: 0, seenMs: 0, queue: [], timer: 0 };
+
+  function pacerShow(text) {
+    pacer.text = text;
+    pacer.needMs = readMs(text);
+    pacer.seenMs = 0;
+    showLine(text, 'audio');
+  }
+
+  function pacerStillReading() {
+    return pacer.text && (pacer.seenMs < pacer.needMs || video?.paused);
+  }
+
+  function pacerPush(text) {
+    text = (text || '').trim();
+    if (!text) return;
+    if (!pacer.timer) pacer.timer = setInterval(pacerTick, PACE_TICK_MS);
+    const last = pacer.queue.length ? pacer.queue.at(-1) : pacer.text;
+    const short = hanCount(text) <= SHORT_LINE_CHARS;
+    if (short && last && pacerStillReading() && hanCount(last) + hanCount(text) <= JOIN_MAX_CHARS) {
+      // Join a short follow-up onto the line that's waiting or on screen.
+      const joined = `${last} ${text}`;
+      if (pacer.queue.length) {
+        pacer.queue[pacer.queue.length - 1] = joined;
+      } else {
+        pacer.text = joined;
+        pacer.needMs = readMs(joined);
+        showLine(joined, 'audio');
+      }
+    } else if (pacerStillReading()) {
+      pacer.queue.push(text);
+      if (pacer.queue.length > MAX_QUEUE) pacer.queue.splice(0, pacer.queue.length - MAX_QUEUE);
+    } else {
+      pacerShow(text);
+    }
+  }
+
+  function pacerTick() {
+    // Reading time only counts while the video plays and no word card is open.
+    if (video && !video.paused && !hovered) pacer.seenMs += PACE_TICK_MS;
+    if (pacer.queue.length && !pacerStillReading()) pacerShow(pacer.queue.shift());
+  }
+
+  function pacerReset() {
+    clearInterval(pacer.timer);
+    Object.assign(pacer, { text: '', needMs: 0, seenMs: 0, queue: [], timer: 0 });
+  }
+
   function gloss(def) {
     return def.replace(/\([^)]*\)|\[[^\]]*\]|CL:.*$/g, '').split(/[;,]/)[0].trim();
   }
@@ -434,7 +499,10 @@
   });
 
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'line' && video) showLine(msg.text, msg.source);
+    if (msg.type === 'line' && video) {
+      if (msg.source === 'audio') pacerPush(msg.text);
+      else showLine(msg.text, msg.source);
+    }
     if (msg.type === 'status') {
       listening = msg.listening;
       if ('info' in msg) statusInfo = msg.info || '';
@@ -446,6 +514,7 @@
       if (!listening) {
         statusInfo = '';
         statusError = '';
+        pacerReset();
         if (line.source === 'audio') line = { text: '', tokens: [], source: null };
       }
       render();

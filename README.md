@@ -30,6 +30,7 @@ The site's own subtitles are hidden while the overlay is on, so you only see the
   - Linux: `~/.config/BraveSoftware/Brave-Browser/Default/Service Worker/CacheStorage/`
 
   It's about 80 MB for the default model on the CPU. The GPU uses a different version of the model, which can be somewhat bigger, and each model you pick in Settings is stored separately. To see or delete it, open the extension's Settings page, press F12 and go to **Application → Cache storage → transformers-cache**. To delete it, run `caches.delete('transformers-cache')` in the Console tab there. Removing the extension also deletes it. If it's deleted, the model downloads again the next time you use audio mode.
+- **Readable pacing.** Transcripts arrive unevenly, so each line stays on screen long enough to read: about 1.5 s plus 0.3 s per character, up to 7 s. A very short line (a word or two) is added onto the line already showing instead of replacing it. The reading time only counts while the video plays, so **pausing the video pauses the subtitles**. Lines that arrive in the meantime wait their turn. If more than 3 pile up, the oldest are skipped so you don't fall far behind.
 - **Cloud API (optional).** OpenAI (about $0.006/min with Whisper) or any OpenAI-compatible service, such as Groq's free tier with `whisper-large-v3`. Set the engine, key, base URL and model in Settings.
 
 All translation is **offline**. Each word is looked up in the bundled CC-CEDICT dictionary (125,000 entries, simplified and traditional).

@@ -140,14 +140,48 @@ try {
     'the small video gets its own subtitles back');
   console.log('multi: switched to the larger, later-added video');
 
-  // 10. Popup renders
+  // 10. Audio-mode pacing: lines stay up long enough to read, short follow-ups
+  //     are joined on, and pausing the video pauses the subtitles.
+  const au = await ctx.newPage();
+  await au.goto(`${base}/audio.html`);
+  await au.evaluate(() => { const v = document.getElementById('v'); v.muted = true; return v.play(); });
+  const sendLine = (text) => list.evaluate(async ([text, url]) => {
+    const [tab] = await chrome.tabs.query({ url });
+    await chrome.tabs.sendMessage(tab.id, { type: 'line', text, source: 'audio' });
+  }, [text, `${base}/audio.html`]);
+  const auBar = () => barText(au);
+  const auHan = async () => (await auBar()).replace(/[^\p{Script=Han}]/gu, '');
+  await au.bringToFront();
+  await au.waitForFunction(() => document.querySelector('pinyin-lens'));
+
+  await sendLine('今天天气很好。');
+  await au.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent.includes('天气'));
+  await sendLine('对');
+  await au.waitForTimeout(300);
+  assert.equal(await auHan(), '今天天气很好对', 'one-word follow-up is joined onto the current line');
+
+  // A long line arriving right away waits until the current one has been read
+  // (1.5 s + 0.3 s per character ≈ 3.6 s for 7 characters).
+  await sendLine('我们明天一起去公园散步吧。');
+  await au.waitForTimeout(1500);
+  assert.equal(await auHan(), '今天天气很好对', 'next line waits while the current one is read');
+
+  // Pausing the video holds the queued line.
+  await au.evaluate(() => document.getElementById('v').pause());
+  await au.waitForTimeout(3500);
+  assert.equal(await auHan(), '今天天气很好对', 'subtitles pause with the video');
+  await au.evaluate(() => document.getElementById('v').play());
+  await au.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent.includes('公园'), null, { timeout: 5000 });
+  console.log('pacing: join, read-time hold and pause-hold work');
+
+  // 11. Popup renders
   const popup = await ctx.newPage();
   await popup.setViewportSize({ width: 300, height: 360 });
   await popup.goto(`chrome-extension://${extId}/popup.html`);
   await popup.locator('#listen').waitFor();
   await popup.screenshot({ path: path.join(shots, 'popup.png') });
 
-  // 11. Options page: engine choice shows the matching fields; on-device is the default
+  // 12. Options page: engine choice shows the matching fields; on-device is the default
   const opts = await ctx.newPage();
   await opts.goto(`chrome-extension://${extId}/options.html`);
   await opts.locator('#engine').waitFor();
