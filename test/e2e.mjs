@@ -174,14 +174,50 @@ try {
   await au.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent.includes('公园'), null, { timeout: 5000 });
   console.log('pacing: join, read-time hold and pause-hold work');
 
-  // 11. Popup renders
+  // 11. Subtitles drawn into the picture (OCR): off by default, then read
+  //     each line as it changes, and cleared when switched off.
+  const bu = await ctx.newPage();
+  await bu.goto(`${base}/burned.html`);
+  await bu.evaluate(() => document.getElementById('v').play());
+  await bu.waitForTimeout(2500);
+  assert.equal(await barText(bu), '', 'OCR is off by default');
+  await setSettings({ ocrEnabled: true });
+  const hanOf = (s) => s.replace(/[^\p{Script=Han}]/gu, '');
+  const t0 = Date.now();
+  await bu.waitForFunction(() => /电影|高兴/.test(document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent),
+    null, { timeout: 20000 });
+  console.log(`ocr first line after ${Date.now() - t0} ms:`, hanOf(await barText(bu)));
+  const seen = new Set();
+  const until = Date.now() + 12000;
+  while (Date.now() < until && seen.size < 2) {
+    const han = hanOf(await barText(bu));
+    if (han.includes('高兴')) seen.add(han);
+    if (han.includes('电影')) seen.add(han);
+    await bu.waitForTimeout(200);
+  }
+  console.log('ocr lines read:', [...seen].join(' / '));
+  assert.ok([...seen].some((h) => h === '我今天很高兴你呢'), 'first burned-in line read exactly');
+  assert.ok([...seen].some((h) => h === '我们一起去看电影吧'), 'second burned-in line read exactly');
+  await bu.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent.includes('高兴'), null, { timeout: 10000 });
+  await bu.screenshot({ path: path.join(shots, 'overlay-ocr.png') });
+  await setSettings({ ocrEnabled: false });
+  await bu.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent === '');
+  console.log('ocr: off by default, reads both lines, clears when switched off');
+
+  // 12. Popup: OCR switch saves the setting; voice switch reflects listening state
   const popup = await ctx.newPage();
-  await popup.setViewportSize({ width: 300, height: 360 });
+  await popup.setViewportSize({ width: 300, height: 420 });
   await popup.goto(`chrome-extension://${extId}/popup.html`);
   await popup.locator('#listen').waitFor();
+  assert.equal(await popup.locator('#ocrEnabled').isChecked(), false);
+  assert.equal(await popup.locator('#listen').isChecked(), false);
+  await popup.locator('#ocrEnabled').check();
+  await popup.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.ocrEnabled === true);
   await popup.screenshot({ path: path.join(shots, 'popup.png') });
+  await popup.locator('#ocrEnabled').uncheck();
+  await popup.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.ocrEnabled === false);
 
-  // 12. Options page: engine choice shows the matching fields; on-device is the default
+  // 13. Options page: engine choice shows the matching fields; on-device is the default
   const opts = await ctx.newPage();
   await opts.goto(`chrome-extension://${extId}/options.html`);
   await opts.locator('#engine').waitFor();

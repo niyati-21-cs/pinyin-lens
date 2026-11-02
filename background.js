@@ -14,8 +14,14 @@ const getDict = () =>
 const OFFSCREEN_URL = 'offscreen.html';
 
 let offscreenReady = null;
+let creatingOffscreen = null;
 
-async function ensureOffscreen() {
+// Audio mode and OCR can both ask at once; only one document may exist.
+function ensureOffscreen() {
+  return (creatingOffscreen ||= createOffscreen().finally(() => { creatingOffscreen = null; }));
+}
+
+async function createOffscreen() {
   const existing = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
   if (existing.length) return;
   // createDocument resolves before the document's module script has
@@ -27,7 +33,7 @@ async function ensureOffscreen() {
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_URL,
     reasons: ['USER_MEDIA', 'WORKERS'],
-    justification: 'Capture tab audio and transcribe spoken Chinese.',
+    justification: 'Capture tab audio and transcribe spoken Chinese; read subtitles from video frames.',
   });
   await ready;
 }
@@ -62,10 +68,34 @@ async function stopListening() {
   const tabId = await getListeningTab();
   if (tabId === null) return;
   await chrome.storage.session.remove('listeningTabId');
+  await chrome.runtime.sendMessage({ target: 'offscreen', type: 'stop' }).catch(() => {});
+  await closeOffscreenIfIdle();
+  notifyTab(tabId, { type: 'status', listening: false });
+}
+
+// --- reading subtitles from the picture (OCR) ---------------------------------
+
+// The offscreen document is shared with audio mode; it closes once neither
+// is in use, so the OCR models don't sit in memory.
+const OCR_IDLE_MS = 60000;
+let lastOcrAt = 0;
+let idleTimer = 0;
+
+async function closeOffscreenIfIdle() {
+  if (Date.now() - lastOcrAt < OCR_IDLE_MS || (await getListeningTab()) !== null) return;
   if ((await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] })).length) {
     await chrome.offscreen.closeDocument();
   }
-  notifyTab(tabId, { type: 'status', listening: false });
+}
+
+async function readSubtitle(image) {
+  lastOcrAt = Date.now();
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(closeOffscreenIfIdle, OCR_IDLE_MS + 1000);
+  await ensureOffscreen();
+  const res = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'ocr', image });
+  if (!res?.ok) throw new Error(res?.error || 'Subtitle reader did not answer.');
+  return { text: res.text };
 }
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
@@ -87,6 +117,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
     case 'annotate':
       return reply(getDict().then((dict) => ({ tokens: annotate(msg.text, dict) })), sendResponse);
+    case 'ocr':
+      return reply(readSubtitle(msg.image), sendResponse);
     case 'start-listening':
       return reply(startListening(msg.tabId), sendResponse);
     case 'stop-listening':

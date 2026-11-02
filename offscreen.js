@@ -77,11 +77,55 @@ function status(info) {
   if (session) chrome.runtime.sendMessage({ type: 'engine-status', tabId: session.tabId, info });
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target !== 'offscreen') return;
   if (msg.type === 'start') start(msg).catch((err) => report(msg.tabId, err));
   if (msg.type === 'stop') stop();
+  if (msg.type === 'ocr') {
+    readSubtitleImage(msg.image).then(
+      (text) => sendResponse({ ok: true, text }),
+      (err) => sendResponse({ ok: false, error: err.message || String(err) }),
+    );
+    return true;
+  }
 });
+
+// --- reading subtitles from the picture (OCR) --------------------------------
+
+let ocrWorker = null;
+let ocrNextId = 0;
+const ocrJobs = new Map();
+
+function getOcrWorker() {
+  if (ocrWorker) return ocrWorker;
+  ocrWorker = new Worker('ocr-worker.js', { type: 'module' });
+  ocrWorker.onmessage = ({ data }) => {
+    const job = ocrJobs.get(data.id);
+    ocrJobs.delete(data.id);
+    if (data.error) job?.reject(new Error(data.error));
+    else job?.resolve(data.text);
+  };
+  ocrWorker.onerror = (e) => {
+    for (const job of ocrJobs.values()) job.reject(new Error(e.message || 'Subtitle reader crashed'));
+    ocrJobs.clear();
+    ocrWorker = null;
+  };
+  return ocrWorker;
+}
+
+// dataURL of the subtitle strip → RGBA pixels → worker → text
+async function readSubtitleImage(dataUrl) {
+  const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0);
+  const { data, width, height } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+  const id = ++ocrNextId;
+  return new Promise((resolve, reject) => {
+    ocrJobs.set(id, { resolve, reject });
+    getOcrWorker().postMessage({ id, image: { data, width, height } }, [data.buffer]);
+  });
+}
 
 function report(tabId, err) {
   chrome.runtime.sendMessage({ type: 'transcribe-error', tabId, error: err.message || String(err) });

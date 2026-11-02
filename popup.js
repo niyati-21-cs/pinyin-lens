@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const listenBtn = $('listen');
+const listenBox = $('listen');
 const statusEl = $('status');
 let tabId = null;
 let listeningHere = false;
@@ -7,7 +7,7 @@ let local = true;
 
 async function init() {
   const settings = await plGetSettings();
-  for (const key of ['enabled', 'showPinyin', 'showGloss']) {
+  for (const key of ['enabled', 'showPinyin', 'showGloss', 'ocrEnabled']) {
     $(key).checked = settings[key];
     $(key).addEventListener('change', async () => {
       const current = await plGetSettings();
@@ -28,19 +28,20 @@ async function init() {
 }
 
 function renderListen() {
-  listenBtn.textContent = listeningHere ? '■ Stop listening' : '🎧 Listen to this tab';
-  listenBtn.classList.toggle('primary', !listeningHere);
+  listenBox.checked = listeningHere;
 }
 
-listenBtn.addEventListener('click', async () => {
-  listenBtn.disabled = true;
-  const res = await chrome.runtime.sendMessage({ type: listeningHere ? 'stop-listening' : 'start-listening', tabId });
-  listenBtn.disabled = false;
+listenBox.addEventListener('change', async () => {
+  const start = listenBox.checked;
+  listenBox.disabled = true;
+  const res = await chrome.runtime.sendMessage({ type: start ? 'start-listening' : 'stop-listening', tabId });
+  listenBox.disabled = false;
   if (!res?.ok) {
     statusEl.textContent = res?.error || 'Something went wrong.';
+    renderListen();
     return;
   }
-  listeningHere = !listeningHere;
+  listeningHere = start;
   statusEl.textContent = !listeningHere
     ? ''
     : local

@@ -199,6 +199,7 @@
 
   async function showLine(text, source) {
     text = (text || '').trim();
+    if ((source === 'subtitles' || source === 'captions') && HAN.test(text)) lastTextLineAt = Date.now();
     if (text === line.text && source === line.source) return;
     const seq = ++lineSeq;
     if (!text || !HAN.test(text)) {
@@ -285,6 +286,128 @@
     clearInterval(pacer.timer);
     Object.assign(pacer, { text: '', needMs: 0, seenMs: 0, queue: [], timer: 0 });
   }
+
+  // --- reading subtitles from the picture (OCR) ------------------------------
+  // Many dramas have Chinese subtitles drawn into the video. A few times a
+  // second, look at the bottom of the picture; when the bright text there
+  // changes and then holds still, send that strip to the OCR model.
+
+  const OCR_TICK_MS = 250;
+  const OCR_STRIP = 0.25;          // subtitles sit in the bottom quarter
+  const OCR_MAX_WIDTH = 1280;
+  const THUMB_W = 160;
+  const THUMB_H = 24;
+  const BRIGHT_LUMA = 190;         // subtitle text is light
+  const CHANGE_PIXELS = 30;        // of 3840 thumbnail pixels
+  const TEXT_PRIORITY_MS = 10000;  // real subtitle text wins over OCR
+  const BLACK_TICKS = 40;          // ~10 s of a pure black picture → probably copy-protected
+
+  const thumbCanvas = document.createElement('canvas');
+  thumbCanvas.width = THUMB_W;
+  thumbCanvas.height = THUMB_H;
+  const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
+  const stripCanvas = document.createElement('canvas');
+  const stripCtx = stripCanvas.getContext('2d');
+  let lastTextLineAt = 0;
+  let ocrPrevMask = null;
+  let ocrChanged = false;
+  let ocrBusy = false;
+  let ocrBlockedVideo = null;
+  let blackTicks = 0;
+
+  function ocrBlock(reason, { stop = true } = {}) {
+    if (stop) ocrBlockedVideo = video;
+    clearTimeout(errorTimer);
+    statusError = `⚠ Can't read subtitles from this video's picture: ${reason}`;
+    errorTimer = setTimeout(() => { statusError = ''; render(); }, 8000);
+    render();
+  }
+
+  function ocrTick() {
+    if (!settings.ocrEnabled || !settings.enabled || !video || ocrBusy) return;
+    if (video.paused || video.readyState < 2 || !video.videoWidth || ocrBlockedVideo === video) return;
+    if (Date.now() - lastTextLineAt < TEXT_PRIORITY_MS) return;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const sy = Math.round(vh * (1 - OCR_STRIP));
+    let px;
+    try {
+      thumbCtx.drawImage(video, 0, sy, vw, vh - sy, 0, 0, THUMB_W, THUMB_H);
+      px = thumbCtx.getImageData(0, 0, THUMB_W, THUMB_H).data;
+    } catch {
+      return ocrBlock('it comes from another site and the browser blocks reading it.');
+    }
+
+    // A copy-protected video reads back as pure black, top to bottom.
+    thumbCtx.drawImage(video, 0, 0, vw, vh, 0, 0, 8, 8);
+    const whole = thumbCtx.getImageData(0, 0, 8, 8).data;
+    let lit = 0;
+    for (let i = 0; i < whole.length; i += 4) lit += whole[i] + whole[i + 1] + whole[i + 2];
+    // Keep checking afterwards: a long dark scene looks the same for a while.
+    blackTicks = lit === 0 ? blackTicks + 1 : 0;
+    if (blackTicks === BLACK_TICKS) ocrBlock('it looks copy-protected (the picture reads as black).', { stop: false });
+    if (blackTicks) return;
+
+    const mask = new Uint8Array(THUMB_W * THUMB_H);
+    for (let i = 0, j = 0; j < mask.length; i += 4, j++) {
+      mask[j] = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2] > BRIGHT_LUMA ? 1 : 0;
+    }
+    let diff = CHANGE_PIXELS + 1;
+    if (ocrPrevMask) {
+      diff = 0;
+      for (let j = 0; j < mask.length; j++) diff += mask[j] !== ocrPrevMask[j];
+    }
+    ocrPrevMask = mask;
+    if (diff > CHANGE_PIXELS) {
+      ocrChanged = true; // wait one tick for the new subtitle to settle
+    } else if (ocrChanged) {
+      ocrChanged = false;
+      readStrip(sy);
+    }
+  }
+
+  async function readStrip(sy) {
+    const vw = video.videoWidth;
+    const scale = Math.min(1, OCR_MAX_WIDTH / vw);
+    stripCanvas.width = Math.round(vw * scale);
+    stripCanvas.height = Math.round((video.videoHeight - sy) * scale);
+    stripCtx.drawImage(video, 0, sy, vw, video.videoHeight - sy, 0, 0, stripCanvas.width, stripCanvas.height);
+    ocrBusy = true;
+    let res;
+    try {
+      res = await chrome.runtime.sendMessage({ type: 'ocr', image: stripCanvas.toDataURL('image/jpeg', 0.92) });
+    } catch {
+      return; // extension was reloaded; this content script is orphaned
+    } finally {
+      ocrBusy = false;
+    }
+    if (!settings.ocrEnabled || Date.now() - lastTextLineAt < TEXT_PRIORITY_MS) return;
+    if (!res?.ok) {
+      ocrBlock(res?.error || 'the subtitle reader failed.', { stop: false });
+      return;
+    }
+    if (!res.text) {
+      if (line.source === 'ocr') showLine('', 'ocr');
+    } else if (line.source !== 'ocr' || !nearlySame(res.text, line.text)) {
+      showLine(res.text, 'ocr');
+    }
+  }
+
+  // OCR can misread a character or two of the same subtitle between frames.
+  function nearlySame(a, b) {
+    if (Math.abs(a.length - b.length) > 2) return false;
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i];
+      for (let j = 1; j <= b.length; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+      prev = cur;
+    }
+    return prev[b.length] <= 2;
+  }
+
+  setInterval(ocrTick, OCR_TICK_MS);
 
   function gloss(def) {
     return def.replace(/\([^)]*\)|\[[^\]]*\]|CL:.*$/g, '').split(/[;,]/)[0].trim();
@@ -485,6 +608,8 @@
   // --- settings, messages, keys --------------------------------------------
 
   function applySettings() {
+    if (!settings.ocrEnabled && line.source === 'ocr') line = { text: '', tokens: [], source: null };
+    if (!settings.ocrEnabled) ocrPrevMask = null;
     updateCaptionSelector();
     if (track) applyTrackMode();
     readSiteCaptions();

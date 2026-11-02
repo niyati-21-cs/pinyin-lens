@@ -17,9 +17,18 @@ Chrome and Edge work the same way: use `chrome://extensions` or `edge://extensio
 |---|---|---|
 | The video's Chinese subtitle track (`<track>`, srclang `zh`) | Automatic | Free, offline |
 | Site captions on YouTube, Netflix, Disney+ and Prime Video | Automatic; turn on Chinese subtitles in the player | Free, offline |
-| **Audio mode**: transcribes what is spoken | Click the toolbar icon → **Listen to this tab** | **Free**: runs Whisper on your computer. A cloud API is optional |
+| **Subtitles drawn into the picture** (most Chinese dramas): read with OCR | Toolbar popup → **Read subtitles from the video picture** (off by default) | Free, offline |
+| **Audio mode**: transcribes what is spoken | Toolbar popup → **Voice recognition on this tab** | **Free**: runs Whisper on your computer. A cloud API is optional |
 
 The site's own subtitles are hidden while the overlay is on, so you only see the overlay. You can change this in Settings. For other sites that draw their own subtitles, add their CSS selector under **Settings → Extra subtitle selectors**.
+
+### Burned-in subtitles (OCR)
+
+Turn on **Read subtitles from the video picture** in the popup (or in Settings). While a video plays, the extension checks the bottom quarter of the picture a few times a second. When the subtitle there changes, it reads the new line with [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) (PP-OCRv4 Chinese). The models (~16 MB) are bundled with the extension, so it works offline with no download. Lines follow the video's own timing.
+
+- A real subtitle track or site captions take priority. OCR only runs when neither has shown a line for 10 s.
+- Copy-protected videos (e.g. paid shows on iQIYI, WeTV, Netflix) and videos served from another site without permission can't be read. The overlay says so.
+- It assumes subtitles are in the bottom quarter of the picture, and punctuation is sometimes dropped.
 
 ### Audio mode engines
 
@@ -40,7 +49,7 @@ All translation is **offline**. Each word is looked up in the bundled CC-CEDICT 
 - **Hover** a word: shows every reading and meaning, and pauses the video (you can turn this off). Move away and the video resumes.
 - **Click** a word or press **S** while hovering: save or unsave it. Saved words are underlined in gold.
 - **Alt+P**: show or hide the overlay.
-- Toolbar popup: toggle pinyin and English, start or stop audio mode, open **Saved words**.
+- Toolbar popup: toggle pinyin and English, switch subtitle reading (OCR) and voice recognition on or off, open **Saved words**.
 - **Saved words** page: filter, delete, and **Export CSV** (Simplified, Traditional, Pinyin, Meaning, Sentence, Source). In Anki, use File → Import.
 
 ## Limitations
@@ -54,14 +63,14 @@ All translation is **offline**. Each word is looked up in the bundled CC-CEDICT 
 
 ```bash
 npm test                          # everything below
-node --test test/*.test.mjs       # segmentation, pinyin, transcription request tests
-node test/e2e.mjs [outdir]        # overlay: subtitles, captions, saving, settings, fullscreen, iframes
+node --test test/*.test.mjs       # segmentation, pinyin, OCR on video frames, transcription requests
+node test/e2e.mjs [outdir]        # overlay: subtitles, captions, burned-in OCR, saving, settings, fullscreen, iframes
 node test/e2e-audio.mjs [outdir]  # audio mode: tab capture, phrase splitting, both engines (mock servers)
 node scripts/build-dict.mjs       # rebuild data/cedict.json from the latest CC-CEDICT
 ```
 
 The e2e tests need Playwright with Chromium and ffmpeg. They use local mock servers, so no real model or API is called.
 
-`vendor/` holds transformers.js 3.8.1 and the ONNX Runtime WebAssembly build (Apache-2.0 / MIT), bundled because extensions can't load remote code.
+`vendor/` holds transformers.js 3.8.1, ONNX Runtime Web 1.22 (Apache-2.0 / MIT), and in `vendor/ocr/` the PaddleOCR PP-OCRv4 Chinese models (Apache-2.0, ONNX exports from `@gutenye/ocr-models`). They're bundled because extensions can't load remote code.
 
 Dictionary data: [CC-CEDICT](https://cc-cedict.org), licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).

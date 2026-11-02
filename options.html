@@ -23,6 +23,7 @@
   <label class="row"><input type="checkbox" id="toneColors"> Color words by tone</label>
   <label class="row"><input type="checkbox" id="hideNative"> Hide the site's own subtitles while the overlay is on</label>
   <label class="row"><input type="checkbox" id="pauseOnHover"> Pause the video while I hover a word</label>
+  <label class="row"><input type="checkbox" id="ocrEnabled"> Read subtitles from the video picture (for subtitles drawn into the video)</label>
   <div class="field">
     <span>Text size (px)</span>
     <input type="number" id="fontSize" min="14" max="72" step="1">
@@ -34,7 +35,7 @@
   </div>
 
   <h2>Audio mode (videos without Chinese subtitles)</h2>
-  <p class="muted">Click <b>Listen to this tab</b> in the toolbar popup. Only clips that contain sound are transcribed.</p>
+  <p class="muted">Turn on <b>Voice recognition on this tab</b> in the toolbar popup. Only clips that contain sound are transcribed.</p>
   <div class="field">
     <span>Speech-to-text engine</span>
     <select id="engine">
@@ -96,7 +97,7 @@
   </div>
 
   <p><button class="primary" id="save">Save</button><span id="saved"></span></p>
-  <p class="muted" style="margin-top:32px">Dictionary: CC-CEDICT, licensed CC BY-SA 4.0 (cc-cedict.org). On-device speech: Whisper via transformers.js (Apache-2.0).</p>
+  <p class="muted" style="margin-top:32px">Dictionary: CC-CEDICT, licensed CC BY-SA 4.0 (cc-cedict.org). On-device speech: Whisper via transformers.js (Apache-2.0). Subtitle reading: PaddleOCR PP-OCRv4 via ONNX Runtime (Apache-2.0 / MIT).</p>
 </main>
 <script src="lib/defaults.js"></script>
 <script src="options.js"></script>
