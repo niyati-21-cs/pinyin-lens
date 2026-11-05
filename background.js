@@ -88,12 +88,24 @@ async function closeOffscreenIfIdle() {
   }
 }
 
-async function readSubtitle(image) {
+function keepOcrAlive() {
   lastOcrAt = Date.now();
   clearTimeout(idleTimer);
   idleTimer = setTimeout(closeOffscreenIfIdle, OCR_IDLE_MS + 1000);
+}
+
+// Loads the OCR models before the first subtitle needs them.
+async function warmUpOcr() {
+  keepOcrAlive();
   await ensureOffscreen();
-  const res = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'ocr', image });
+  await chrome.runtime.sendMessage({ target: 'offscreen', type: 'ocr-warmup' });
+  return {};
+}
+
+async function readSubtitle(image, boxes) {
+  keepOcrAlive();
+  await ensureOffscreen();
+  const res = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'ocr', image, boxes });
   if (!res?.ok) throw new Error(res?.error || 'Subtitle reader did not answer.');
   return { text: res.text };
 }
@@ -118,7 +130,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'annotate':
       return reply(getDict().then((dict) => ({ tokens: annotate(msg.text, dict) })), sendResponse);
     case 'ocr':
-      return reply(readSubtitle(msg.image), sendResponse);
+      return reply(readSubtitle(msg.image, msg.boxes), sendResponse);
+    case 'ocr-warmup':
+      return reply(warmUpOcr(), sendResponse);
     case 'start-listening':
       return reply(startListening(msg.tabId), sendResponse);
     case 'stop-listening':

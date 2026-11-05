@@ -21,11 +21,15 @@ function load() {
   })());
 }
 
-onmessage = ({ data: { id, image } }) => {
+onmessage = ({ data: { id, image, boxes, warmup } }) => {
+  if (warmup) {
+    load().catch(() => { loading = null; });
+    return;
+  }
   queue = queue.then(async () => {
     try {
       const ocr = await load();
-      postMessage({ id, text: await ocr.recognize(image) });
+      postMessage({ id, text: await ocr.recognize(image, boxes) });
     } catch (err) {
       loading = null;
       postMessage({ id, error: err.message || String(err) });

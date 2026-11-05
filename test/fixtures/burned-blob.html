@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><title>Burned-in subtitles, streamed (blob: URL)</title>
+<body style="margin:0;background:#111">
+<!-- Same video as burned.html, but loaded as a Blob URL like streaming sites do,
+     so the look-ahead copy can't be used and subtitles are read live. -->
+<video id="v" muted loop playsinline style="width:960px;height:540px;display:block;margin:20px auto"></video>
+<script>
+  fetch('burned.webm').then((r) => r.blob()).then((b) => { document.getElementById('v').src = URL.createObjectURL(b); });
+</script>
+</body>

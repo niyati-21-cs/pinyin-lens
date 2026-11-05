@@ -175,7 +175,9 @@ try {
   console.log('pacing: join, read-time hold and pause-hold work');
 
   // 11. Subtitles drawn into the picture (OCR): off by default, then read
-  //     each line as it changes, and cleared when switched off.
+  //     each line as it changes, on time, and cleared when switched off.
+  //     Close the earlier video pages so they don't compete for the reader.
+  for (const p of [page, page2, fs, fr, mv, au]) await p.close();
   const bu = await ctx.newPage();
   await bu.goto(`${base}/burned.html`);
   await bu.evaluate(() => document.getElementById('v').play());
@@ -200,9 +202,57 @@ try {
   assert.ok([...seen].some((h) => h === '我们一起去看电影吧'), 'second burned-in line read exactly');
   await bu.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent.includes('高兴'), null, { timeout: 10000 });
   await bu.screenshot({ path: path.join(shots, 'overlay-ocr.png') });
+
+  // How late each subtitle change shows up (the fixture switches lines at 0 s
+  // and 4 s of an 8 s loop), and that lines don't flicker in between.
+  const lineDelays = (pg) => pg.evaluate(() => new Promise((resolve) => {
+    const v = document.getElementById('v');
+    const bar = () => document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent;
+    const which = () => (bar().includes('电影') ? 2 : bar().includes('高兴') ? 1 : 0);
+    let last = which();
+    const seq = [];
+    const delays = [];
+    const t0 = performance.now();
+    const iv = setInterval(() => {
+      const w = which();
+      if (w && w !== last) {
+        seq.push(w);
+        let d = v.currentTime - (w === 2 ? 4 : 0);
+        if (d < -1) d += 8;
+        delays.push(d);
+      }
+      if (w) last = w;
+      if (delays.length >= 4 || performance.now() - t0 > 25000) {
+        clearInterval(iv);
+        resolve({ seq, delays });
+      }
+    }, 20);
+  }));
+  const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const noFlicker = (seq) => seq.every((w, i) => i === 0 || w !== seq[i - 1]);
+
+  // Plain video file: a hidden copy runs 1 s ahead, so lines show on time.
+  const aheadRun = await lineDelays(bu);
+  console.log('ocr look-ahead delays (s):', aheadRun.delays.map((d) => d.toFixed(2)).join(', '));
+  assert.ok(aheadRun.delays.length >= 4 && noFlicker(aheadRun.seq), `lines alternate without flicker: ${aheadRun.seq}`);
+  assert.ok(median(aheadRun.delays) <= 0.35, 'look-ahead lines appear within 0.35 s');
+
+  // Streamed video (blob: URL) can't be copied: read live, still quickly.
+  await bu.close();
+  const live = await ctx.newPage();
+  await live.goto(`${base}/burned-blob.html`);
+  await live.waitForFunction(() => document.getElementById('v').readyState >= 2);
+  await live.evaluate(() => document.getElementById('v').play());
+  await live.waitForFunction(() => /电影|高兴/.test(document.querySelector('pinyin-lens')?.shadowRoot.querySelector('.bar').textContent || ''),
+    null, { timeout: 20000 });
+  const liveRun = await lineDelays(live);
+  console.log('ocr live delays (s):', liveRun.delays.map((d) => d.toFixed(2)).join(', '));
+  assert.ok(liveRun.delays.length >= 4 && noFlicker(liveRun.seq), `live lines alternate without flicker: ${liveRun.seq}`);
+  assert.ok(median(liveRun.delays) <= 0.8, 'live lines appear within 0.8 s');
+
   await setSettings({ ocrEnabled: false });
-  await bu.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent === '');
-  console.log('ocr: off by default, reads both lines, clears when switched off');
+  await live.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent === '');
+  console.log('ocr: off by default, reads both lines on time, clears when switched off');
 
   // 12. Popup: OCR switch saves the setting; voice switch reflects listening state
   const popup = await ctx.newPage();

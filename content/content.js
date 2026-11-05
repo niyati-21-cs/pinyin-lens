@@ -288,19 +288,25 @@
   }
 
   // --- reading subtitles from the picture (OCR) ------------------------------
-  // Many dramas have Chinese subtitles drawn into the video. A few times a
+  // Many dramas have Chinese subtitles drawn into the video. Several times a
   // second, look at the bottom of the picture; when the bright text there
-  // changes and then holds still, send that strip to the OCR model.
+  // changes, crop the subtitle band and send it to the OCR model.
+  //
+  // Look-ahead: when the page plays a plain video file, a hidden muted copy
+  // runs 1 s ahead. Its frames are read early and each line is shown when the
+  // real video reaches it, so subtitles appear on time. Streamed videos (blob:
+  // URLs) can't be copied; those are read live, as fast as possible.
 
-  const OCR_TICK_MS = 250;
+  const OCR_TICK_MS = 150;
   const OCR_STRIP = 0.25;          // subtitles sit in the bottom quarter
   const OCR_MAX_WIDTH = 1280;
-  const THUMB_W = 160;
-  const THUMB_H = 24;
-  const BRIGHT_LUMA = 190;         // subtitle text is light
-  const CHANGE_PIXELS = 30;        // of 3840 thumbnail pixels
+  const THUMB_W = 320;
+  const THUMB_H = 48;
   const TEXT_PRIORITY_MS = 10000;  // real subtitle text wins over OCR
-  const BLACK_TICKS = 40;          // ~10 s of a pure black picture → probably copy-protected
+  const BLACK_TICKS = 67;          // ~10 s of a pure black picture → probably copy-protected
+  const LOOKAHEAD_S = 1.0;
+  const LOOKAHEAD_MIN_S = 0.3;     // the copy must be at least this far ahead to be used
+  const LOOKAHEAD_DRIFT_S = 0.3;
 
   const thumbCanvas = document.createElement('canvas');
   thumbCanvas.width = THUMB_W;
@@ -309,11 +315,17 @@
   const stripCanvas = document.createElement('canvas');
   const stripCtx = stripCanvas.getContext('2d');
   let lastTextLineAt = 0;
-  let ocrPrevMask = null;
-  let ocrChanged = false;
+  let ocrPrevMask = { live: null, ahead: null };
+  let ocrConfirm = { live: false, ahead: false }; // re-read next tick to confirm a candidate
+  let ocrCandidate = null;
   let ocrBusy = false;
+  let ocrQueued = [];
   let ocrBlockedVideo = null;
+  let ocrWarmedUp = false;
   let blackTicks = 0;
+  // coveredFrom: the real-video time from which the copy has been read; before
+  // it (just after starting or a jump) the live video is read instead.
+  const ahead = { video: null, clone: null, failed: false, timeline: [], coveredFrom: null };
 
   function ocrBlock(reason, { stop = true } = {}) {
     if (stop) ocrBlockedVideo = video;
@@ -323,79 +335,232 @@
     render();
   }
 
+  // --- look-ahead copy ---
+
+  function dropClone() {
+    ahead.clone?.remove();
+    ahead.clone = null;
+    ahead.timeline = [];
+    ahead.coveredFrom = null;
+  }
+
+  function onRealSeek() {
+    ahead.timeline = [];
+    ahead.coveredFrom = null;
+    ocrPrevMask = { live: null, ahead: null };
+    ocrCandidate = null;
+  }
+
+  // The live video still needs reading until it reaches the part the copy covers.
+  const aheadCovers = () => ahead.coveredFrom !== null && video.currentTime >= ahead.coveredFrom;
+
+  function syncLookahead() {
+    if (ahead.video !== video) {
+      ahead.video?.removeEventListener('seeking', onRealSeek);
+      dropClone();
+      ahead.video = video;
+      ahead.failed = false;
+      video?.addEventListener('seeking', onRealSeek);
+    }
+    const src = video?.currentSrc || '';
+    if (ahead.failed || !/^https?:/.test(src)) return dropClone();
+    if (!ahead.clone || ahead.clone.dataset.src !== src) {
+      dropClone();
+      const c = document.createElement('video');
+      Object.assign(c, { muted: true, playsInline: true, preload: 'auto', crossOrigin: 'anonymous' });
+      c.dataset.src = src;
+      // Kept on screen (but invisible) so the browser doesn't stop decoding it.
+      c.style.cssText = 'all:initial;position:fixed;right:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;';
+      c.addEventListener('error', () => { ahead.failed = true; dropClone(); });
+      c.src = src;
+      document.documentElement.appendChild(c);
+      ahead.clone = c;
+    }
+    const c = ahead.clone;
+    if (video.paused) {
+      if (!c.paused) c.pause();
+      return;
+    }
+    if (c.playbackRate !== video.playbackRate) c.playbackRate = video.playbackRate;
+    const target = video.currentTime + LOOKAHEAD_S * video.playbackRate;
+    if (c.readyState >= 1 && !c.seeking && Math.abs(c.currentTime - target) > LOOKAHEAD_DRIFT_S
+        && target < (c.duration || Infinity)) {
+      c.currentTime = target;
+      ahead.coveredFrom = null;
+      ocrPrevMask.ahead = null;
+    }
+    if (c.paused) c.play().catch(() => { ahead.failed = true; dropClone(); });
+  }
+
+  function lookaheadReady() {
+    const c = ahead.clone;
+    return !!c && c.readyState >= 2 && !c.paused && !c.seeking
+      && c.currentTime - video.currentTime >= LOOKAHEAD_MIN_S;
+  }
+
+  // --- frames ---
+
+  // Subtitle-like pixels in the bottom strip of `src` (lib/subtitle-lines.js):
+  // plain bright background mostly doesn't count, so it doesn't trigger reads.
+  function readThumb(src, sy) {
+    thumbCtx.drawImage(src, 0, sy, src.videoWidth, src.videoHeight - sy, 0, 0, THUMB_W, THUMB_H);
+    return plSubtitleMask(thumbCtx.getImageData(0, 0, THUMB_W, THUMB_H).data, THUMB_W, THUMB_H);
+  }
+
+  function isBlack(src) {
+    thumbCtx.drawImage(src, 0, 0, src.videoWidth, src.videoHeight, 0, 0, 8, 8);
+    const px = thumbCtx.getImageData(0, 0, 8, 8).data;
+    for (let i = 0; i < px.length; i += 4) if (px[i] + px[i + 1] + px[i + 2]) return false;
+    return true;
+  }
+
+  // Crops the found lines out of the frame. Returns the image (dataURL) and
+  // the line boxes in its pixels, so the model can read them directly.
+  function cropLines(src, sy, lines) {
+    const kx = src.videoWidth / THUMB_W;
+    const ky = (src.videoHeight - sy) / THUMB_H;
+    const x0 = Math.min(...lines.map((b) => b.x0)) * kx;
+    const x1 = (Math.max(...lines.map((b) => b.x1)) + 1) * kx;
+    const y0 = sy + Math.min(...lines.map((b) => b.y0)) * ky;
+    const y1 = sy + (Math.max(...lines.map((b) => b.y1)) + 1) * ky;
+    const scale = Math.min(1, OCR_MAX_WIDTH / src.videoWidth);
+    stripCanvas.width = Math.max(16, Math.round((x1 - x0) * scale));
+    stripCanvas.height = Math.max(16, Math.round((y1 - y0) * scale));
+    stripCtx.drawImage(src, x0, y0, x1 - x0, y1 - y0, 0, 0, stripCanvas.width, stripCanvas.height);
+    const boxes = lines.map((b) => {
+      const x = Math.round((b.x0 * kx - x0) * scale);
+      const y = Math.round((sy + b.y0 * ky - y0) * scale);
+      return {
+        x, y,
+        w: Math.min(stripCanvas.width - x, Math.round((b.x1 - b.x0 + 1) * kx * scale)),
+        h: Math.min(stripCanvas.height - y, Math.round((b.y1 - b.y0 + 1) * ky * scale)),
+      };
+    });
+    return { image: stripCanvas.toDataURL('image/jpeg', 0.92), boxes };
+  }
+
   function ocrTick() {
-    if (!settings.ocrEnabled || !settings.enabled || !video || ocrBusy) return;
-    if (video.paused || video.readyState < 2 || !video.videoWidth || ocrBlockedVideo === video) return;
+    if (!settings.ocrEnabled || !settings.enabled || !video) return;
+    if (video.readyState < 2 || !video.videoWidth || ocrBlockedVideo === video) return;
     if (Date.now() - lastTextLineAt < TEXT_PRIORITY_MS) return;
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    const sy = Math.round(vh * (1 - OCR_STRIP));
-    let px;
+    if (!ocrWarmedUp) {
+      // Load the models now so the first subtitle doesn't wait for them.
+      ocrWarmedUp = true;
+      chrome.runtime.sendMessage({ type: 'ocr-warmup' }).catch(() => {});
+    }
+    syncLookahead();
+    showDueLines();
+    if (video.paused) return;
+
+    if (lookaheadReady()) {
+      if (ahead.coveredFrom === null) ahead.coveredFrom = ahead.clone.currentTime;
+      scanFrame('ahead', ahead.clone);
+    }
+    if (!aheadCovers()) scanFrame('live', video);
+  }
+
+  function scanFrame(mode, src) {
+    const sy = Math.round(src.videoHeight * (1 - OCR_STRIP));
+    let mask;
     try {
-      thumbCtx.drawImage(video, 0, sy, vw, vh - sy, 0, 0, THUMB_W, THUMB_H);
-      px = thumbCtx.getImageData(0, 0, THUMB_W, THUMB_H).data;
+      mask = readThumb(src, sy);
+      if (mode === 'ahead' && isBlack(src) && !isBlack(video)) throw new Error('copy reads black');
     } catch {
+      if (mode === 'ahead') {
+        ahead.failed = true;
+        dropClone();
+        return;
+      }
       return ocrBlock('it comes from another site and the browser blocks reading it.');
     }
 
-    // A copy-protected video reads back as pure black, top to bottom.
-    thumbCtx.drawImage(video, 0, 0, vw, vh, 0, 0, 8, 8);
-    const whole = thumbCtx.getImageData(0, 0, 8, 8).data;
-    let lit = 0;
-    for (let i = 0; i < whole.length; i += 4) lit += whole[i] + whole[i + 1] + whole[i + 2];
-    // Keep checking afterwards: a long dark scene looks the same for a while.
-    blackTicks = lit === 0 ? blackTicks + 1 : 0;
-    if (blackTicks === BLACK_TICKS) ocrBlock('it looks copy-protected (the picture reads as black).', { stop: false });
-    if (blackTicks) return;
+    if (mode === 'live') {
+      // A copy-protected video reads back as pure black, top to bottom.
+      // Keep checking afterwards: a long dark scene looks the same for a while.
+      blackTicks = isBlack(video) ? blackTicks + 1 : 0;
+      if (blackTicks === BLACK_TICKS) ocrBlock('it looks copy-protected (the picture reads as black).', { stop: false });
+      if (blackTicks) return;
+    }
 
-    const mask = new Uint8Array(THUMB_W * THUMB_H);
-    for (let i = 0, j = 0; j < mask.length; i += 4, j++) {
-      mask[j] = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2] > BRIGHT_LUMA ? 1 : 0;
+    const frame = { mask, lines: plFindLines(mask, THUMB_W, THUMB_H) };
+    const changed = plSubtitleChanged(ocrPrevMask[mode], frame, THUMB_W) || ocrConfirm[mode];
+    ocrPrevMask[mode] = frame;
+    ocrConfirm[mode] = false;
+    if (!changed) return;
+
+    const job = { mode, at: src.currentTime, video };
+    const { lines } = frame;
+    if (!lines.length) {
+      ocrResult(job, ''); // the subtitle went away: no need to ask the model
+      return;
     }
-    let diff = CHANGE_PIXELS + 1;
-    if (ocrPrevMask) {
-      diff = 0;
-      for (let j = 0; j < mask.length; j++) diff += mask[j] !== ocrPrevMask[j];
-    }
-    ocrPrevMask = mask;
-    if (diff > CHANGE_PIXELS) {
-      ocrChanged = true; // wait one tick for the new subtitle to settle
-    } else if (ocrChanged) {
-      ocrChanged = false;
-      readStrip(sy);
-    }
+    Object.assign(job, cropLines(src, sy, lines));
+    // Only the newest change per source matters; an older queued one is replaced.
+    if (ocrBusy) ocrQueued = [...ocrQueued.filter((j) => j.mode !== mode), job];
+    else runOcr(job);
   }
 
-  async function readStrip(sy) {
-    const vw = video.videoWidth;
-    const scale = Math.min(1, OCR_MAX_WIDTH / vw);
-    stripCanvas.width = Math.round(vw * scale);
-    stripCanvas.height = Math.round((video.videoHeight - sy) * scale);
-    stripCtx.drawImage(video, 0, sy, vw, video.videoHeight - sy, 0, 0, stripCanvas.width, stripCanvas.height);
+  async function runOcr(job) {
     ocrBusy = true;
     let res;
     try {
-      res = await chrome.runtime.sendMessage({ type: 'ocr', image: stripCanvas.toDataURL('image/jpeg', 0.92) });
+      res = await chrome.runtime.sendMessage({ type: 'ocr', image: job.image, boxes: job.boxes });
     } catch {
-      return; // extension was reloaded; this content script is orphaned
-    } finally {
       ocrBusy = false;
+      return; // extension was reloaded; this content script is orphaned
     }
-    if (!settings.ocrEnabled || Date.now() - lastTextLineAt < TEXT_PRIORITY_MS) return;
-    if (!res?.ok) {
-      ocrBlock(res?.error || 'the subtitle reader failed.', { stop: false });
-      return;
-    }
-    if (!res.text) {
-      if (line.source === 'ocr') showLine('', 'ocr');
-    } else if (line.source !== 'ocr' || !nearlySame(res.text, line.text)) {
-      showLine(res.text, 'ocr');
+    ocrBusy = false;
+    if (!res?.ok) ocrBlock(res?.error || 'the subtitle reader failed.', { stop: false });
+    else ocrResult(job, res.text);
+    if (ocrQueued.length) runOcr(ocrQueued.shift());
+  }
+
+  function ocrResult(job, text) {
+    if (job.video !== video || !settings.ocrEnabled || Date.now() - lastTextLineAt < TEXT_PRIORITY_MS) return;
+    // The model read nothing although text is there: keep what's shown.
+    if (!text && job.image) return;
+    if (job.mode === 'ahead') {
+      // Show it when the real video reaches the frame it was read from.
+      ahead.timeline.push({ at: job.at, text, job });
+      ahead.timeline.sort((x, y) => x.at - y.at);
+      showDueLines();
+    } else if (!aheadCovers()) {
+      applyOcrText(text, job);
     }
   }
 
-  // OCR can misread a character or two of the same subtitle between frames.
-  function nearlySame(a, b) {
-    if (Math.abs(a.length - b.length) > 2) return false;
+  function showDueLines() {
+    const now = video?.currentTime ?? 0;
+    // Entries far ahead of the real video are left over from a jump back.
+    ahead.timeline = ahead.timeline.filter((e) => e.at - now <= LOOKAHEAD_S + 1);
+    let due = null;
+    while (ahead.timeline.length && ahead.timeline[0].at <= now) due = ahead.timeline.shift();
+    if (due) applyOcrText(due.text, due.job);
+  }
+
+  // A new reading replaces the line at once when the text is almost entirely
+  // different (a new subtitle). A reading that is only partly different is
+  // often the same subtitle misread while busy background passes behind it,
+  // so two reads in a row must agree first.
+  function applyOcrText(text, job) {
+    if (!text) {
+      ocrCandidate = null;
+      if (line.source === 'ocr') showLine('', 'ocr');
+      return;
+    }
+    const current = line.source === 'ocr' ? line.text : '';
+    if (current && nearlySame(text, current)) {
+      ocrCandidate = null;
+    } else if (!current || mostlyDifferent(text, current) || (ocrCandidate && nearlySame(text, ocrCandidate))) {
+      ocrCandidate = null;
+      showLine(text, 'ocr');
+    } else {
+      ocrCandidate = text;
+      ocrConfirm[job.mode] = true;
+    }
+  }
+
+  function editDistance(a, b) {
     let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
     for (let i = 1; i <= a.length; i++) {
       const cur = [i];
@@ -404,8 +569,16 @@
       }
       prev = cur;
     }
-    return prev[b.length] <= 2;
+    return prev[b.length];
   }
+
+  // OCR can misread a few characters of the same subtitle between frames
+  // (up to 30%); those reads keep the line already shown.
+  function nearlySame(a, b) {
+    return editDistance(a, b) <= Math.max(2, Math.floor(0.3 * Math.max(a.length, b.length)));
+  }
+
+  const mostlyDifferent = (a, b) => editDistance(a, b) >= 0.65 * Math.max(a.length, b.length);
 
   setInterval(ocrTick, OCR_TICK_MS);
 
@@ -496,6 +669,8 @@
 
   (function loop() {
     if (line.tokens.length || listening || statusError || statusInfo) position();
+    // Look-ahead OCR lines are timed to the frame; check every animation frame.
+    if (ahead.timeline.length) showDueLines();
     requestAnimationFrame(loop);
   })();
 
@@ -609,7 +784,10 @@
 
   function applySettings() {
     if (!settings.ocrEnabled && line.source === 'ocr') line = { text: '', tokens: [], source: null };
-    if (!settings.ocrEnabled) ocrPrevMask = null;
+    if (!settings.ocrEnabled) {
+      ocrPrevMask = { live: null, ahead: null };
+      dropClone();
+    }
     updateCaptionSelector();
     if (track) applyTrackMode();
     readSiteCaptions();

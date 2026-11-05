@@ -26,6 +26,9 @@ The site's own subtitles are hidden while the overlay is on, so you only see the
 
 Turn on **Read subtitles from the video picture** in the popup (or in Settings). While a video plays, the extension checks the bottom quarter of the picture a few times a second. When the subtitle there changes, it reads the new line with [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) (PP-OCRv4 Chinese). The models (~16 MB) are bundled with the extension, so it works offline with no download. Lines follow the video's own timing.
 
+- **Timing:** a new subtitle usually shows within about 0.1–0.3 s. The models load as soon as a video plays, so the first line doesn't wait for them.
+- **Look-ahead (plain video files only):** when the page plays an ordinary video file, a hidden, muted copy runs 1 s ahead. Its frames are read early and each line appears right when the real video reaches it. This downloads the video a second time. Streamed videos (most big sites use `blob:` URLs) can't be copied and are read live instead.
+- **No flicker:** to keep busy backgrounds from flashing misread text, a reading that's only partly different from the line on screen must be confirmed by a second read. A completely new line shows at once.
 - A real subtitle track or site captions take priority. OCR only runs when neither has shown a line for 10 s.
 - Copy-protected videos (e.g. paid shows on iQIYI, WeTV, Netflix) and videos served from another site without permission can't be read. The overlay says so.
 - It assumes subtitles are in the bottom quarter of the picture, and punctuation is sometimes dropped.
