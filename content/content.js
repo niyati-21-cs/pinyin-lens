@@ -48,6 +48,11 @@
         gap: 2px 4px; max-width: 92%; padding: 8px 14px; border-radius: 12px;
         background: rgba(0,0,0,.72); color: #fff; text-shadow: 0 1px 2px #000; }
       .bar:empty { display: none; }
+      .en-wrap { position: fixed; display: flex; justify-content: center; }
+      .en { pointer-events: none; max-width: 92%; padding: 4px 12px; border-radius: 8px; text-align: center;
+        background: rgba(0,0,0,.6); color: #fff; text-shadow: 0 1px 2px #000; white-space: pre-line;
+        font: 500 0.62em/1.35 system-ui, sans-serif; }
+      .en:empty { display: none; }
       .w { pointer-events: auto; display: inline-flex; flex-direction: column; align-items: center;
         cursor: pointer; padding: 2px 3px; border-radius: 6px; }
       .w:hover, .w.active { background: rgba(255,255,255,.18); }
@@ -73,10 +78,13 @@
       .card .hint { margin-top: 8px; color: #888; font-size: 12px; }
     </style>
     <div class="wrap"><div class="badge" hidden></div><div class="bar"></div></div>
+    <div class="en-wrap"><div class="en"></div></div>
     <div class="card" hidden></div>`;
   const wrap = root.querySelector('.wrap');
   const badge = root.querySelector('.badge');
   const bar = root.querySelector('.bar');
+  const enWrap = root.querySelector('.en-wrap');
+  const enLine = root.querySelector('.en');
   const card = root.querySelector('.card');
 
   const nativeStyle = document.createElement('style');
@@ -134,6 +142,38 @@
       null;
     if (pick !== track) setTrack(pick);
     else if (track) applyTrackMode();
+    // A second, English track (dual-subtitle videos) is shown as its own line.
+    const enPick = settings.showEnglish && track
+      ? tracks.find((t) => t !== track && (/^en/i.test(t.language) || /english/i.test(t.label))) || null
+      : null;
+    if (enPick !== enTrack) setEnTrack(enPick);
+    else if (enTrack) applyEnTrackMode();
+  }
+
+  let enTrack = null;
+
+  function applyEnTrackMode() {
+    if (!originalModes.has(enTrack)) originalModes.set(enTrack, enTrack.mode);
+    // Hidden while we draw it ourselves next to the pinyin overlay.
+    const want = settings.enabled ? 'hidden' : originalModes.get(enTrack);
+    if (enTrack.mode !== want) enTrack.mode = want;
+  }
+
+  function setEnTrack(t) {
+    if (enTrack) {
+      enTrack.removeEventListener('cuechange', onEnCueChange);
+      if (originalModes.has(enTrack)) enTrack.mode = originalModes.get(enTrack);
+      setEnglish('');
+    }
+    enTrack = t;
+    if (!enTrack) return;
+    applyEnTrackMode();
+    enTrack.addEventListener('cuechange', onEnCueChange);
+    onEnCueChange();
+  }
+
+  function onEnCueChange() {
+    setEnglish([...(enTrack.activeCues || [])].map((c) => (c.text || '').replace(/<[^>]+>/g, '')).join('\n'));
   }
 
   const originalModes = new WeakMap();
@@ -163,6 +203,97 @@
       .map((c) => (c.text || '').replace(/<[^>]+>/g, ''))
       .join('\n');
     showLine(text, 'subtitles');
+  }
+
+  // --- English line on YouTube --------------------------------------------------
+  // YouTube shows one caption track at a time. When Chinese captions are on,
+  // the player's own caption request (visible in the page's resource timing)
+  // is reused with lang=en to fetch the English track: the video's English
+  // captions, else auto-generated English, else YouTube's machine
+  // translation of the Chinese track.
+
+  const english = { key: '', src: '', events: [], lastZhUrl: '' };
+
+  function setEnglish(text) {
+    text = (text || '').trim();
+    if (enLine.textContent !== text) {
+      enLine.textContent = text;
+      position();
+    }
+  }
+
+  function onResource(url) {
+    if (!/\/api\/timedtext\?/.test(url)) return;
+    const u = new URL(url, location.href);
+    const lang = u.searchParams.get('tlang') || u.searchParams.get('lang') || '';
+    if (!/^(zh|cmn)/i.test(lang)) return; // only while Chinese captions are on
+    english.lastZhUrl = url; // kept so switching English on later still works
+    if (!settings.showEnglish) return;
+    const key = `${u.searchParams.get('v')}|${lang}`;
+    if (key === english.key) return;
+    english.key = key;
+    english.events = [];
+    loadEnglish(u, key);
+  }
+
+  async function loadEnglish(zhUrl, key) {
+    const withParams = (base, set, remove = []) => {
+      const u = new URL(base);
+      u.searchParams.set('fmt', 'json3');
+      for (const [k, v] of Object.entries(set)) u.searchParams.set(k, v);
+      for (const k of remove) u.searchParams.delete(k);
+      return u;
+    };
+    const candidates = [
+      withParams(zhUrl, { lang: 'en' }, ['tlang', 'kind', 'name']),
+      withParams(zhUrl, { lang: 'en', kind: 'asr' }, ['tlang', 'name']),
+      withParams(zhUrl, { tlang: 'en' }),
+    ];
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, { credentials: 'include' });
+        if (!res.ok) continue;
+        const events = parseJson3(await res.json());
+        if (english.key !== key) return;
+        if (events.length) {
+          english.events = events;
+          english.src = video?.currentSrc || '';
+          return;
+        }
+      } catch {
+        // empty or non-JSON reply: try the next option
+      }
+    }
+  }
+
+  function parseJson3(data) {
+    return (data.events || [])
+      .filter((e) => e.segs)
+      .map((e) => ({
+        start: e.tStartMs / 1000,
+        end: (e.tStartMs + (e.dDurationMs || 0)) / 1000,
+        text: e.segs.map((s) => s.utf8 || '').join('').trim(),
+      }))
+      .filter((e) => e.text);
+  }
+
+  function showEnglishCue() {
+    // YouTube swaps the video source when the next video starts.
+    if (!settings.showEnglish || !video || video.currentSrc !== english.src) {
+      english.events = [];
+      english.key = '';
+      return setEnglish('');
+    }
+    const t = video.currentTime;
+    setEnglish(english.events.filter((e) => t >= e.start && t < e.end).map((e) => e.text).join('\n'));
+  }
+
+  try {
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) onResource(entry.name);
+    }).observe({ type: 'resource', buffered: true });
+  } catch {
+    // no resource timing in this frame
   }
 
   function updateCaptionSelector() {
@@ -599,6 +730,7 @@
     host.style.display = visible ? '' : 'none';
     if (!visible) return;
     bar.style.fontSize = `${settings.fontSize}px`;
+    enLine.style.fontSize = `${settings.fontSize}px`;
 
     line.tokens.forEach((tok, i) => {
       if (!tok.entries) {
@@ -657,18 +789,29 @@
     position();
   }
 
+  // The pinyin overlay sits at the bottom or top of the video (setting). The
+  // English line goes right under it at the bottom, or stays at the bottom,
+  // where subtitles usually are, when the overlay is at the top.
   function position() {
     if (!video || host.style.display === 'none') return;
     const r = video.getBoundingClientRect();
+    const top = settings.overlayPosition === 'top';
     // Inside a fullscreen element "fixed" is still relative to the viewport.
+    const fromBottom = `${Math.max(0, innerHeight - r.bottom) + r.height * 0.1}px`;
     wrap.style.left = `${r.left}px`;
     wrap.style.width = `${r.width}px`;
-    wrap.style.top = 'auto';
-    wrap.style.bottom = `${Math.max(0, innerHeight - r.bottom) + r.height * 0.1}px`;
+    wrap.style.top = top ? `${Math.max(0, r.top) + r.height * 0.05}px` : 'auto';
+    wrap.style.bottom = top ? 'auto' : fromBottom;
+    if (top && enLine.parentNode !== enWrap) enWrap.appendChild(enLine);
+    if (!top && enLine.parentNode !== wrap) wrap.appendChild(enLine);
+    enWrap.style.left = `${r.left}px`;
+    enWrap.style.width = `${r.width}px`;
+    enWrap.style.bottom = fromBottom;
   }
 
   (function loop() {
-    if (line.tokens.length || listening || statusError || statusInfo) position();
+    if (english.events.length) showEnglishCue();
+    if (line.tokens.length || enLine.textContent || listening || statusError || statusInfo) position();
     // Look-ahead OCR lines are timed to the frame; check every animation frame.
     if (ahead.timeline.length) showDueLines();
     requestAnimationFrame(loop);
@@ -732,7 +875,10 @@
     const r = el.getBoundingClientRect();
     const cr = card.getBoundingClientRect();
     card.style.left = `${Math.min(Math.max(8, r.left + r.width / 2 - cr.width / 2), innerWidth - cr.width - 8)}px`;
-    card.style.top = `${Math.max(8, r.top - cr.height - 10)}px`;
+    // With the overlay at the top of the video, open the card below the word.
+    card.style.top = settings.overlayPosition === 'top'
+      ? `${Math.min(innerHeight - cr.height - 8, r.bottom + 10)}px`
+      : `${Math.max(8, r.top - cr.height - 10)}px`;
   }
 
   function scheduleHideCard() {
@@ -789,7 +935,14 @@
       dropClone();
     }
     updateCaptionSelector();
-    if (track) applyTrackMode();
+    chooseTrack();
+    if (!settings.showEnglish) {
+      english.events = [];
+      english.key = '';
+      setEnglish('');
+    } else if (english.lastZhUrl && !english.events.length) {
+      onResource(english.lastZhUrl);
+    }
     readSiteCaptions();
     render();
   }

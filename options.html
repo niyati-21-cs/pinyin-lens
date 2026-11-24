@@ -20,10 +20,18 @@
   <label class="row"><input type="checkbox" id="enabled"> Show the overlay on videos</label>
   <label class="row"><input type="checkbox" id="showPinyin"> Show pinyin above each word</label>
   <label class="row"><input type="checkbox" id="showGloss"> Show a short English meaning under each word</label>
+  <label class="row"><input type="checkbox" id="showEnglish"> Also show English subtitles when the video has them</label>
   <label class="row"><input type="checkbox" id="toneColors"> Color words by tone</label>
   <label class="row"><input type="checkbox" id="hideNative"> Hide the site's own subtitles while the overlay is on</label>
   <label class="row"><input type="checkbox" id="pauseOnHover"> Pause the video while I hover a word</label>
   <label class="row"><input type="checkbox" id="ocrEnabled"> Read subtitles from the video picture (for subtitles drawn into the video)</label>
+  <div class="field">
+    <span>Pinyin overlay position</span>
+    <select id="overlayPosition">
+      <option value="bottom">Bottom of the video</option>
+      <option value="top">Top of the video (English subtitles stay at the bottom)</option>
+    </select>
+  </div>
   <div class="field">
     <span>Text size (px)</span>
     <input type="number" id="fontSize" min="14" max="72" step="1">
@@ -32,6 +40,10 @@
     <span>Extra subtitle selectors</span>
     <textarea id="extraSelectors" rows="3" placeholder=".subtitle-text, .caption-line"></textarea>
     <small>For sites that draw their own subtitles as page elements (YouTube, Netflix, Disney+ and Prime Video are built in). One CSS selector per line.</small>
+  </div>
+  <div class="field">
+    <span>English subtitles</span>
+    <small style="margin-top:0">On YouTube, turn on <b>Chinese</b> captions in the player; the English line is fetched alongside (the video's English captions, or YouTube's auto-generated or auto-translated English). On other sites it works when the video offers both a Chinese and an English subtitle track.</small>
   </div>
 
   <h2>Audio mode (videos without Chinese subtitles)</h2>

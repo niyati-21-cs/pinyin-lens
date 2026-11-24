@@ -22,6 +22,15 @@ Chrome and Edge work the same way: use `chrome://extensions` or `edge://extensio
 
 The site's own subtitles are hidden while the overlay is on, so you only see the overlay. You can change this in Settings. For other sites that draw their own subtitles, add their CSS selector under **Settings → Extra subtitle selectors**.
 
+### Chinese and English subtitles together
+
+With **English subtitles too** on (popup or Settings, on by default), an English line is shown alongside the pinyin:
+
+- **YouTube:** pick **Chinese** in the player's subtitle menu. YouTube can only show one track at a time, so the extension fetches the English track itself, reusing the player's own caption request. It uses the video's English captions, or YouTube's auto-generated English, or else YouTube's machine translation of the Chinese track.
+- **Other sites:** works when the video offers both a Chinese and an English subtitle track.
+
+In **Settings → Pinyin overlay position** choose **Top** to show the pinyin at the top of the video while the English line stays at the bottom, where subtitles usually are. With **Bottom** (the default) the English line sits right under the pinyin.
+
 ### Burned-in subtitles (OCR)
 
 Turn on **Read subtitles from the video picture** in the popup (or in Settings). While a video plays, the extension checks the bottom quarter of the picture a few times a second. When the subtitle there changes, it reads the new line with [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) (PP-OCRv4 Chinese). The models (~16 MB) are bundled with the extension, so it works offline with no download. Lines follow the video's own timing.

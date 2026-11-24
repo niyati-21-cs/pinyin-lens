@@ -10,7 +10,22 @@ import { launch, startServer, shadow, barText } from './helpers.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const shots = process.argv[2] || here;
-const { server, base } = startServer();
+// Mock of YouTube's caption endpoint: Chinese and English tracks for video
+// "withen", only Chinese (plus machine translation via tlang) for "noen".
+const timedtextRequests = [];
+const json3 = (cues) => JSON.stringify({ events: cues.map(([s, e, t]) => ({ tStartMs: s * 1000, dDurationMs: (e - s) * 1000, segs: [{ utf8: t }] })) });
+const ZH_CUES = [[0, 6, '我今天很高兴，你呢？'], [6, 12, '我们一起去看电影吧！'], [12, 20, '这个问题有点儿复杂。']];
+const EN_CUES = [[0, 6, "I'm very happy today, and you?"], [6, 12, "Let's go see a movie together!"], [12, 20, 'This problem is a bit complicated.']];
+const { server, base } = startServer({
+  'GET /api/timedtext': (req, res) => {
+    const q = new URL(req.url, 'http://x').searchParams;
+    timedtextRequests.push(Object.fromEntries(q));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (q.get('tlang') === 'en') return res.end(json3(EN_CUES.map(([s, e, t]) => [s, e, `(auto-translated) ${t}`])));
+    if (q.get('lang') === 'en') return res.end(q.get('v') === 'withen' && !q.get('kind') ? json3(EN_CUES) : '{"events":[]}');
+    res.end(json3(ZH_CUES));
+  },
+});
 const { ctx, extId } = await launch();
 
 try {
@@ -173,6 +188,60 @@ try {
   await au.evaluate(() => document.getElementById('v').play());
   await au.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').textContent.includes('公园'), null, { timeout: 5000 });
   console.log('pacing: join, read-time hold and pause-hold work');
+
+  // 10b. Chinese + English together. YouTube: the English track is fetched by
+  //      reusing the player's caption request (same token), shown as its own
+  //      line; the overlay can sit at the top with English at the bottom.
+  const yt = await ctx.newPage();
+  await yt.goto(`${base}/yt.html?v=withen`);
+  await yt.evaluate(() => document.getElementById('v').play());
+  await shadow(yt, '.w').first().waitFor({ timeout: 10000 });
+  const enText = (pg) => pg.evaluate(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.en').textContent);
+  await yt.waitForFunction(() => /happy/.test(document.querySelector('pinyin-lens').shadowRoot.querySelector('.en').textContent), null, { timeout: 10000 });
+  console.log('youtube english line:', await enText(yt));
+  const enReq = timedtextRequests.find((q) => q.lang === 'en' && q.v === 'withen');
+  assert.ok(enReq && enReq.pot === 'TOKEN123' && enReq.fmt === 'json3', 'English request reuses the player token');
+  // Bottom (default): English right under the pinyin line.
+  const boxes = (pg) => pg.evaluate(() => {
+    const r = document.querySelector('pinyin-lens').shadowRoot;
+    const b = r.querySelector('.bar').getBoundingClientRect();
+    const e = r.querySelector('.en').getBoundingClientRect();
+    const v = document.getElementById('v').getBoundingClientRect();
+    return { bar: b.top - v.top, en: e.top - v.top, video: v.height };
+  });
+  let pos = await boxes(yt);
+  assert.ok(pos.en > pos.bar && pos.bar > pos.video / 2, `bottom layout: ${JSON.stringify(pos)}`);
+  await setSettings({ overlayPosition: 'top' });
+  await yt.waitForFunction(() => {
+    const b = document.querySelector('pinyin-lens').shadowRoot.querySelector('.bar').getBoundingClientRect();
+    return b.top < document.getElementById('v').getBoundingClientRect().top + 100;
+  });
+  pos = await boxes(yt);
+  assert.ok(pos.bar < pos.video / 4 && pos.en > pos.video / 2, `top layout: ${JSON.stringify(pos)}`);
+  await yt.screenshot({ path: path.join(shots, 'overlay-dual-top.png') });
+  console.log('dual: pinyin at top, English at bottom');
+
+  // No English track: falls back to YouTube's translation of the Chinese one.
+  const yt2 = await ctx.newPage();
+  await yt2.goto(`${base}/yt.html?v=noen`);
+  await yt2.evaluate(() => document.getElementById('v').play());
+  await yt2.waitForFunction(() => /auto-translated/.test(document.querySelector('pinyin-lens')?.shadowRoot.querySelector('.en').textContent || ''), null, { timeout: 10000 });
+  console.log('youtube fallback:', await enText(yt2));
+
+  // Other sites: a video with both a Chinese and an English subtitle track.
+  const du = await ctx.newPage();
+  await du.goto(`${base}/dual.html`);
+  await du.evaluate(() => document.getElementById('v').play());
+  await du.waitForFunction(() => /happy/.test(document.querySelector('pinyin-lens')?.shadowRoot.querySelector('.en').textContent || ''), null, { timeout: 10000 });
+  assert.equal(await du.evaluate(() => document.getElementById('v').textTracks[1].mode), 'hidden', 'native English hidden while we draw it');
+  console.log('dual tracks english line:', await enText(du));
+
+  // Switching English off removes the line; restore defaults for later steps.
+  await setSettings({ showEnglish: false, overlayPosition: 'bottom' });
+  await du.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.en').textContent === '');
+  await yt.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.en').textContent === '');
+  await setSettings({ showEnglish: true });
+  for (const p of [yt, yt2, du]) await p.close();
 
   // 11. Subtitles drawn into the picture (OCR): off by default, then read
   //     each line as it changes, on time, and cleared when switched off.

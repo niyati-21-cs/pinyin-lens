@@ -1,0 +1,25 @@
+<!doctype html><meta charset="utf-8"><title>YouTube-style dual subtitles test</title>
+<body style="margin:0;background:#111">
+<!-- Mimics YouTube: Chinese captions drawn as .ytp-caption-segment elements,
+     after the "player" fetches its caption track from /api/timedtext. -->
+<div id="movie_player" style="position:relative;width:960px;margin:20px auto">
+  <video id="v" src="clip.webm" muted loop playsinline style="width:960px;height:540px;display:block"></video>
+  <div style="position:absolute;bottom:40px;width:100%;text-align:center;color:#fff;font-size:24px">
+    <span class="ytp-caption-segment" id="cap"></span>
+  </div>
+</div>
+<script>
+  const vid = new URLSearchParams(location.search).get('v') || 'withen';
+  fetch(`/api/timedtext?v=${vid}&lang=zh-CN&fmt=json3&pot=TOKEN123&signature=SIG`)
+    .then((r) => r.json())
+    .then((data) => {
+      const cues = data.events.map((e) => ({ s: e.tStartMs / 1000, e: (e.tStartMs + e.dDurationMs) / 1000, t: e.segs[0].utf8 }));
+      const v = document.getElementById('v');
+      setInterval(() => {
+        const c = cues.find((c) => v.currentTime >= c.s && v.currentTime < c.e);
+        const text = c ? c.t : '';
+        if (document.getElementById('cap').textContent !== text) document.getElementById('cap').textContent = text;
+      }, 50);
+    });
+</script>
+</body>

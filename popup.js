@@ -7,7 +7,7 @@ let local = true;
 
 async function init() {
   const settings = await plGetSettings();
-  for (const key of ['enabled', 'showPinyin', 'showGloss', 'ocrEnabled']) {
+  for (const key of ['enabled', 'showPinyin', 'showGloss', 'showEnglish', 'ocrEnabled']) {
     $(key).checked = settings[key];
     $(key).addEventListener('change', async () => {
       const current = await plGetSettings();
