@@ -51,15 +51,16 @@
       .en-wrap { position: fixed; display: flex; justify-content: center; }
       .en { pointer-events: none; max-width: 92%; padding: 4px 12px; border-radius: 8px; text-align: center;
         background: rgba(0,0,0,.6); color: #fff; text-shadow: 0 1px 2px #000; white-space: pre-line;
-        font: 500 0.62em/1.35 system-ui, sans-serif; }
+        font: 500 var(--en, 0.62em)/1.35 system-ui, sans-serif; }
       .en:empty { display: none; }
       .w { pointer-events: auto; display: inline-flex; flex-direction: column; align-items: center;
         cursor: pointer; padding: 2px 3px; border-radius: 6px; }
       .w:hover, .w.active { background: rgba(255,255,255,.18); }
-      .w.saved .hz { text-decoration: underline 2px #ffd34d; text-underline-offset: 5px; }
-      .py { font: 500 0.5em/1.2 system-ui, sans-serif; opacity: .95; white-space: nowrap; }
+      .w.saved .hz, .w.saved.no-hz .py { text-decoration: underline 2px #ffd34d; text-underline-offset: 5px; }
+      .py { font: 500 var(--py, 0.5em)/1.2 system-ui, sans-serif; opacity: .95; white-space: nowrap; }
+      .w.no-hz .py { font-weight: 600; opacity: 1; }
       .hz { line-height: 1.25; white-space: nowrap; }
-      .gl { font: 0.36em/1.2 system-ui, sans-serif; opacity: .8; max-width: 9em; white-space: nowrap;
+      .gl { font: var(--gl, 0.36em)/1.2 system-ui, sans-serif; opacity: .8; max-width: 9em; white-space: nowrap;
         overflow: hidden; text-overflow: ellipsis; }
       .p { align-self: flex-end; line-height: 1.25; white-space: pre; }
       .card { pointer-events: auto; position: fixed; z-index: 1; width: max-content; max-width: min(380px, 90vw);
@@ -142,10 +143,15 @@
       null;
     if (pick !== track) setTrack(pick);
     else if (track) applyTrackMode();
-    // A second, English track (dual-subtitle videos) is shown as its own line.
+    // A second, English track (dual-subtitle videos) is shown as its own line:
+    // any English one, or the one matching the language typed in settings.
+    const wanted = englishWanted();
     const enPick = settings.showEnglish && track
-      ? tracks.find((t) => t !== track && (/^en/i.test(t.language) || /english/i.test(t.label))) || null
+      ? tracks.find((t) => t !== track && (wanted
+        ? t.language.toLowerCase().includes(wanted) || t.label.toLowerCase().includes(wanted)
+        : /^en/i.test(t.language) || /english/i.test(t.label))) || null
       : null;
+    if (wanted && settings.showEnglish && track && !enPick && tracks.length > 1) noEnglishMatch();
     if (enPick !== enTrack) setEnTrack(enPick);
     else if (enTrack) applyEnTrackMode();
   }
@@ -212,7 +218,25 @@
   // captions, else auto-generated English, else YouTube's machine
   // translation of the Chinese track.
 
-  const english = { key: '', src: '', events: [], lastZhUrl: '' };
+  const english = { key: '', src: '', events: [], lastZhUrl: '', hinted: '' };
+
+  // A message on the overlay's badge for a few seconds.
+  function showHint(text) {
+    clearTimeout(errorTimer);
+    statusError = text;
+    errorTimer = setTimeout(() => { statusError = ''; render(); }, 8000);
+    render();
+  }
+
+  // The language typed in settings (lower case), or '' for automatic.
+  const englishWanted = () => (settings.englishAuto ? '' : settings.englishLang.trim().toLowerCase());
+
+  function noEnglishMatch() {
+    const wanted = settings.englishLang.trim();
+    if (english.hinted === wanted) return; // say it once per value
+    english.hinted = wanted;
+    showHint(`⚠ No subtitle track matching "${wanted}"`);
+  }
 
   function setEnglish(text) {
     text = (text || '').trim();
@@ -229,7 +253,7 @@
     if (!/^(zh|cmn)/i.test(lang)) return; // only while Chinese captions are on
     english.lastZhUrl = url; // kept so switching English on later still works
     if (!settings.showEnglish) return;
-    const key = `${u.searchParams.get('v')}|${lang}`;
+    const key = `${u.searchParams.get('v')}|${lang}|${englishWanted()}`;
     if (key === english.key) return;
     english.key = key;
     english.events = [];
@@ -244,10 +268,15 @@
       for (const k of remove) u.searchParams.delete(k);
       return u;
     };
+    // Typed in settings: that language code only (e.g. en-GB). Automatic: the
+    // usual English variants, auto-generated English, then a translation.
+    const wanted = englishWanted();
+    // Sent as typed: YouTube's language codes are case-sensitive (en-GB).
+    const langs = wanted ? [settings.englishLang.trim()] : ['en', 'en-US', 'en-GB', 'en-CA', 'en-AU', 'en-IN'];
     const candidates = [
-      withParams(zhUrl, { lang: 'en' }, ['tlang', 'kind', 'name']),
-      withParams(zhUrl, { lang: 'en', kind: 'asr' }, ['tlang', 'name']),
-      withParams(zhUrl, { tlang: 'en' }),
+      ...langs.map((lang) => withParams(zhUrl, { lang }, ['tlang', 'kind', 'name'])),
+      withParams(zhUrl, { lang: langs[0], kind: 'asr' }, ['tlang', 'name']),
+      withParams(zhUrl, { tlang: langs[0] }),
     ];
     for (const url of candidates) {
       try {
@@ -264,6 +293,7 @@
         // empty or non-JSON reply: try the next option
       }
     }
+    if (wanted && english.key === key) noEnglishMatch();
   }
 
   function parseJson3(data) {
@@ -288,12 +318,15 @@
     setEnglish(english.events.filter((e) => t >= e.start && t < e.end).map((e) => e.text).join('\n'));
   }
 
-  try {
-    new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) onResource(entry.name);
-    }).observe({ type: 'resource', buffered: true });
-  } catch {
-    // no resource timing in this frame
+  // Started once settings are loaded (buffered, so earlier requests count too).
+  function watchCaptionRequests() {
+    try {
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) onResource(entry.name);
+      }).observe({ type: 'resource', buffered: true });
+    } catch {
+      // no resource timing in this frame
+    }
   }
 
   function updateCaptionSelector() {
@@ -460,10 +493,7 @@
 
   function ocrBlock(reason, { stop = true } = {}) {
     if (stop) ocrBlockedVideo = video;
-    clearTimeout(errorTimer);
-    statusError = `⚠ Can't read subtitles from this video's picture: ${reason}`;
-    errorTimer = setTimeout(() => { statusError = ''; render(); }, 8000);
-    render();
+    showHint(`⚠ Can't read subtitles from this video's picture: ${reason}`);
   }
 
   // --- look-ahead copy ---
@@ -731,6 +761,10 @@
     if (!visible) return;
     bar.style.fontSize = `${settings.fontSize}px`;
     enLine.style.fontSize = `${settings.fontSize}px`;
+    const sizes = plWordSizes(settings);
+    bar.style.setProperty('--py', `${sizes.py}em`);
+    bar.style.setProperty('--gl', `${sizes.gl}em`);
+    enLine.style.setProperty('--en', `${sizes.en}em`);
 
     line.tokens.forEach((tok, i) => {
       if (!tok.entries) {
@@ -742,7 +776,7 @@
       }
       const [first] = tok.entries;
       const w = document.createElement('span');
-      w.className = 'w' + (saved[tok.text] ? ' saved' : '');
+      w.className = 'w' + (saved[tok.text] ? ' saved' : '') + (sizes.show.hz ? '' : ' no-hz');
       w.dataset.i = i;
 
       const py = document.createElement('span');
@@ -764,9 +798,9 @@
         if (colorBy) s.style.color = TONE_COLORS[(first.tones[k] || 5) - 1];
         hz.appendChild(s);
       });
-      if (settings.showPinyin) w.appendChild(py);
-      w.appendChild(hz);
-      if (settings.showGloss) {
+      if (sizes.show.py) w.appendChild(py);
+      if (sizes.show.hz) w.appendChild(hz);
+      if (sizes.show.gl) {
         const gl = document.createElement('span');
         gl.className = 'gl';
         gl.textContent = gloss(first.defs[0]);
@@ -935,7 +969,16 @@
       dropClone();
     }
     updateCaptionSelector();
+    const enChoice = `${settings.englishAuto}|${settings.englishLang}`;
+    if (enChoice !== english.choice) {
+      // A different English choice: fetch again.
+      english.choice = enChoice;
+      english.events = [];
+      english.key = '';
+      setEnglish('');
+    }
     chooseTrack();
+    if (enTrack) onEnCueChange(); // the chosen track's current line, right away
     if (!settings.showEnglish) {
       english.events = [];
       english.key = '';
@@ -995,6 +1038,8 @@
   (async () => {
     const stored = await chrome.storage.local.get(['settings', 'words']);
     settings = { ...globalThis.PL_DEFAULTS, ...stored.settings };
+    english.choice = `${settings.englishAuto}|${settings.englishLang}`;
+    watchCaptionRequests();
     saved = stored.words || {};
     updateCaptionSelector();
     pickVideo();

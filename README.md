@@ -28,6 +28,7 @@ With **English subtitles too** on (popup or Settings, on by default), an English
 
 - **YouTube:** pick **Chinese** in the player's subtitle menu. YouTube can only show one track at a time, so the extension fetches the English track itself, reusing the player's own caption request. It uses the video's English captions, or YouTube's auto-generated English, or else YouTube's machine translation of the Chinese track.
 - **Other sites:** works when the video offers both a Chinese and an English subtitle track.
+- **Which English track:** automatic by default. On YouTube it tries `en`, `en-US`, `en-GB`, `en-CA`, `en-AU`, `en-IN`, then auto-generated English, then a translation. On other sites it takes any track whose language starts with `en` or whose name contains "English". To pick one yourself, untick **Pick the English track automatically** and type a language code or name (e.g. `en-GB` or `English (UK)`; on YouTube use the code). If nothing matches, the overlay says so.
 
 In **Settings → Pinyin overlay position** choose **Top** to show the pinyin at the top of the video while the English line stays at the bottom, where subtitles usually are. With **Bottom** (the default) the English line sits right under the pinyin.
 
@@ -61,7 +62,10 @@ All translation is **offline**. Each word is looked up in the bundled CC-CEDICT 
 - **Hover** a word: shows every reading and meaning, and pauses the video (you can turn this off). Move away and the video resumes.
 - **Click** a word or press **S** while hovering: save or unsave it. Saved words are underlined in gold.
 - **Alt+P**: show or hide the overlay.
-- Toolbar popup: toggle pinyin and English, switch subtitle reading (OCR) and voice recognition on or off, open **Saved words**.
+- **Toolbar popup:**
+  - Choose what each word shows: **Pinyin**, **Characters**, **Meaning**, with a live preview. Parts you turn off give their space to the others: with characters off, the pinyin is shown at full size.
+  - English subtitles line and its track, pinyin position (bottom/top), subtitle reading (OCR), voice recognition, saved words.
+  - **Advanced: sizes** (closed by default): characters size in px, and pinyin, meaning and English line sizes as % of it (Auto by default). **Reset to auto** restores them.
 - **Saved words** page: filter, delete, and **Export CSV** (Simplified, Traditional, Pinyin, Meaning, Sentence, Source). In Anki, use File → Import.
 
 ## Limitations

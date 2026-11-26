@@ -22,7 +22,9 @@ const { server, base } = startServer({
     timedtextRequests.push(Object.fromEntries(q));
     res.writeHead(200, { 'content-type': 'application/json' });
     if (q.get('tlang') === 'en') return res.end(json3(EN_CUES.map(([s, e, t]) => [s, e, `(auto-translated) ${t}`])));
-    if (q.get('lang') === 'en') return res.end(q.get('v') === 'withen' && !q.get('kind') ? json3(EN_CUES) : '{"events":[]}');
+    // "withen" has an en track, "engb" only an en-GB one, "noen" none.
+    const hasEnglish = !q.get('kind') && ((q.get('v') === 'withen' && q.get('lang') === 'en') || (q.get('v') === 'engb' && q.get('lang') === 'en-GB'));
+    if (q.get('lang')?.startsWith('en')) return res.end(hasEnglish ? json3(EN_CUES) : '{"events":[]}');
     res.end(json3(ZH_CUES));
   },
 });
@@ -236,6 +238,74 @@ try {
   assert.equal(await du.evaluate(() => document.getElementById('v').textTracks[1].mode), 'hidden', 'native English hidden while we draw it');
   console.log('dual tracks english line:', await enText(du));
 
+  // English (UK): YouTube auto mode tries the English variants before falling
+  // back to a translation; a typed code is used as the language.
+  const gb = await ctx.newPage();
+  await gb.goto(`${base}/yt.html?v=engb`);
+  await gb.evaluate(() => document.getElementById('v').play());
+  await gb.waitForFunction(() => /happy/.test(document.querySelector('pinyin-lens')?.shadowRoot.querySelector('.en').textContent || ''), null, { timeout: 10000 });
+  assert.doesNotMatch(await enText(gb), /auto-translated/, 'en-GB track found, not the translation');
+  await gb.close();
+  await setSettings({ englishAuto: false, englishLang: 'en-GB' });
+  const gb2 = await ctx.newPage();
+  const before = timedtextRequests.length;
+  await gb2.goto(`${base}/yt.html?v=engb`);
+  await gb2.evaluate(() => document.getElementById('v').play());
+  await gb2.waitForFunction(() => /happy/.test(document.querySelector('pinyin-lens')?.shadowRoot.querySelector('.en').textContent || ''), null, { timeout: 10000 });
+  // (Other open pages refetch for the new setting too; look at this video only.)
+  const englishAsked = timedtextRequests.slice(before).filter((q) => q.v === 'engb' && q.lang !== 'zh-CN').map((q) => q.lang);
+  assert.deepEqual(englishAsked, ['en-GB'], 'manual language is the only one asked for');
+  await gb2.close();
+
+  // Other sites: an "English (UK)" track matches automatically and by name;
+  // a value that matches nothing says so.
+  await setSettings({ englishAuto: true, englishLang: '' });
+  const uk = await ctx.newPage();
+  await uk.goto(`${base}/dual-uk.html`);
+  await uk.evaluate(() => document.getElementById('v').play());
+  await uk.waitForFunction(() => /happy/.test(document.querySelector('pinyin-lens')?.shadowRoot.querySelector('.en').textContent || ''), null, { timeout: 10000 });
+  await setSettings({ englishAuto: false, englishLang: 'English (UK)' });
+  await uk.waitForTimeout(300);
+  assert.match(await enText(uk), /happy/, 'matched by track name');
+  await setSettings({ englishLang: 'fr' });
+  await uk.waitForFunction(() => {
+    const r = document.querySelector('pinyin-lens').shadowRoot;
+    return r.querySelector('.en').textContent === '' && /No subtitle track matching "fr"/.test(r.querySelector('.badge').textContent);
+  }, null, { timeout: 5000 });
+  console.log('english (uk): auto, by code, by name, and "no match" hint work');
+  await setSettings({ englishAuto: true, englishLang: '' });
+  await uk.close();
+
+  // Which parts of each word show, and turned-off parts give their space.
+  const wp = await ctx.newPage();
+  await wp.goto(`${base}/track.html`);
+  await wp.evaluate(() => document.getElementById('v').play());
+  await shadow(wp, '.w').first().waitFor({ timeout: 10000 });
+  const parts = () => wp.evaluate(() => {
+    const w = document.querySelector('pinyin-lens').shadowRoot.querySelector('.w');
+    const size = (sel) => { const el = w.querySelector(sel); return el ? parseFloat(getComputedStyle(el).fontSize) : null; };
+    return { py: size('.py'), hz: size('.hz'), gl: size('.gl') };
+  });
+  const expectParts = async (patch, want, why) => {
+    await setSettings(patch);
+    let got;
+    for (let i = 0; i < 20; i++) {
+      got = await parts();
+      if (JSON.stringify(got) === JSON.stringify(want)) return;
+      await wp.waitForTimeout(100);
+    }
+    assert.deepEqual(got, want, why);
+  };
+  await expectParts({}, { py: 15, hz: 30, gl: 10.8 }, 'all three at the usual sizes');
+  await expectParts({ showHanzi: false }, { py: 30, hz: null, gl: 15 }, 'no characters: pinyin takes their size');
+  await expectParts({ showHanzi: true, showPinyin: false }, { py: null, hz: 30, gl: 15 }, 'no pinyin: meaning grows');
+  await expectParts({ showGloss: false }, { py: null, hz: 30, gl: null }, 'characters only');
+  await expectParts({ showHanzi: false }, { py: null, hz: 30, gl: null }, 'all off: characters still shown');
+  await expectParts({ showPinyin: true, showHanzi: true, showGloss: true, pinyinScale: 80 }, { py: 24, hz: 30, gl: 10.8 }, 'advanced pinyin size');
+  await expectParts({ pinyinScale: null }, { py: 15, hz: 30, gl: 10.8 }, 'back to auto');
+  console.log('word parts: checkboxes and automatic sizes work');
+  await wp.close();
+
   // Switching English off removes the line; restore defaults for later steps.
   await setSettings({ showEnglish: false, overlayPosition: 'bottom' });
   await du.waitForFunction(() => document.querySelector('pinyin-lens').shadowRoot.querySelector('.en').textContent === '');
@@ -325,15 +395,33 @@ try {
 
   // 12. Popup: OCR switch saves the setting; voice switch reflects listening state
   const popup = await ctx.newPage();
-  await popup.setViewportSize({ width: 300, height: 420 });
+  await popup.setViewportSize({ width: 330, height: 600 });
   await popup.goto(`chrome-extension://${extId}/popup.html`);
   await popup.locator('#listen').waitFor();
   assert.equal(await popup.locator('#ocrEnabled').isChecked(), false);
   assert.equal(await popup.locator('#listen').isChecked(), false);
   await popup.locator('#ocrEnabled').check();
   await popup.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.ocrEnabled === true);
-  await popup.screenshot({ path: path.join(shots, 'popup.png') });
+  await popup.screenshot({ path: path.join(shots, 'popup.png'), fullPage: true });
   await popup.locator('#ocrEnabled').uncheck();
+  // Word part chips, live preview, and the advanced sizes (closed at first).
+  assert.equal(await popup.locator('#advanced').evaluate((d) => d.open), false, 'advanced sizes start closed');
+  await popup.locator('label.chip:has(#showHanzi)').click();
+  await popup.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.showHanzi === false);
+  assert.equal(await popup.locator('#preview .hz').count(), 0, 'preview follows the chips');
+  await popup.locator('label.chip:has(#showHanzi)').click();
+  await popup.locator('#advanced summary').click();
+  await popup.locator('#pinyinScale').fill('70');
+  await popup.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.pinyinScale === 70);
+  assert.equal(await popup.locator('#pinyinScaleOut').textContent(), '70%');
+  await popup.screenshot({ path: path.join(shots, 'popup-advanced.png'), fullPage: true });
+  await popup.click('#resetSizes');
+  await popup.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.pinyinScale === null);
+  assert.match(await popup.locator('#pinyinScaleOut').textContent(), /^Auto/);
+  await popup.locator('#advanced summary').click();
+  await popup.emulateMedia({ colorScheme: 'dark' });
+  await popup.screenshot({ path: path.join(shots, 'popup-dark.png'), fullPage: true });
+  await popup.emulateMedia({ colorScheme: 'light' });
   await popup.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.ocrEnabled === false);
 
   // 13. Options page: engine choice shows the matching fields; on-device is the default

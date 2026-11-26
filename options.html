@@ -19,8 +19,14 @@
   <h2>Display</h2>
   <label class="row"><input type="checkbox" id="enabled"> Show the overlay on videos</label>
   <label class="row"><input type="checkbox" id="showPinyin"> Show pinyin above each word</label>
+  <label class="row"><input type="checkbox" id="showHanzi"> Show the Chinese characters</label>
   <label class="row"><input type="checkbox" id="showGloss"> Show a short English meaning under each word</label>
   <label class="row"><input type="checkbox" id="showEnglish"> Also show English subtitles when the video has them</label>
+  <label class="row" style="margin-left:28px"><input type="checkbox" id="englishAuto"> Pick the English track automatically</label>
+  <div class="field" style="margin-left:28px">
+    <input type="text" id="englishLang" placeholder="Otherwise: language code or name, e.g. en-GB or English (UK)">
+    <small>Used when automatic is off. On YouTube use a language code (e.g. <code>en-GB</code>).</small>
+  </div>
   <label class="row"><input type="checkbox" id="toneColors"> Color words by tone</label>
   <label class="row"><input type="checkbox" id="hideNative"> Hide the site's own subtitles while the overlay is on</label>
   <label class="row"><input type="checkbox" id="pauseOnHover"> Pause the video while I hover a word</label>
@@ -35,7 +41,14 @@
   <div class="field">
     <span>Text size (px)</span>
     <input type="number" id="fontSize" min="14" max="72" step="1">
+    <small>The size of the Chinese characters. When a part of each word is turned off, the others grow into its space.</small>
   </div>
+  <div class="pair">
+    <div class="field"><span>Pinyin size (%)</span><input type="number" id="pinyinScale" min="30" max="120" step="5" placeholder="Auto"></div>
+    <div class="field"><span>Meaning size (%)</span><input type="number" id="glossScale" min="30" max="120" step="5" placeholder="Auto"></div>
+    <div class="field"><span>English line (%)</span><input type="number" id="englishScale" min="30" max="120" step="5" placeholder="Auto"></div>
+  </div>
+  <small class="muted">Sizes are % of the character size. Leave empty for automatic.</small>
   <div class="field">
     <span>Extra subtitle selectors</span>
     <textarea id="extraSelectors" rows="3" placeholder=".subtitle-text, .caption-line"></textarea>
